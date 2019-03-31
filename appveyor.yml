@@ -1,0 +1,21 @@
+version: 1.0.0.{build}
+image: Visual Studio 2017
+configuration: Release
+platform:
+- Win32
+before_build:
+- cmd: premake5.exe vs2017
+build:
+  project: Opensegaapi.sln
+  verbosity: minimal
+artifacts:
+- path: build\bin\release\
+  name: Opensegaapi
+deploy:
+- provider: GitHub
+  release: OpenParrot$(platform)_$(APPVEYOR_BUILD_VERSION)
+  description: $(APPVEYOR_REPO_COMMIT_MESSAGE)
+  auth_token:
+    secure: a2B+6mDTHuBa0fw8nm739eGJIZBcZp0IenhKvvXvreLR6ZUoHg9pflMP8ahNUK6o
+  repository: teknogods/Opensegaapi
+  artifact: build\bin\Opensegaapi.zip
