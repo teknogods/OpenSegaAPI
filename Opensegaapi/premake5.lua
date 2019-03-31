@@ -12,4 +12,7 @@ project "Opensegaapi"
 
 	includedirs { "src" }
 
-	postbuildcommands { }
+postbuildcommands {
+  "if not exist $(TargetDir)output mkdir $(TargetDir)output",
+  "{COPY} $(TargetDir)Opensegaapi.dll $(TargetDir)output/"
+}
