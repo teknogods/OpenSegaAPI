@@ -20,3 +20,5 @@ deploy:
     secure: a2B+6mDTHuBa0fw8nm739eGJIZBcZp0IenhKvvXvreLR6ZUoHg9pflMP8ahNUK6o
   repository: teknogods/Opensegaapi
   artifact: build\bin\release\Opensegaapi.zip
+  on:
+    appveyor_repo_tag: true
