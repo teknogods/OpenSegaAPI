@@ -778,17 +778,19 @@ extern "C" {
 	{
 		if (hHandle == NULL)
 		{
+#ifdef _DEBUG
+			info("SEGAAPI_GetPlaybackStatus: Handle: %08X, Status: OPENSEGAERR_BAD_HANDLE", hHandle);
+#endif
 			return OPEN_HAWOSTATUS(OPENSEGAERR_BAD_HANDLE);
 		}
-
-#ifdef _DEBUG
-		info("SEGAAPI_GetPlaybackStatus: Handle: %08X", hHandle);
-#endif
 
 		OPEN_segaapiBuffer_t* buffer = (OPEN_segaapiBuffer_t*)hHandle;
 
 		if (buffer->paused)
 		{
+#ifdef _DEBUG
+			info("SEGAAPI_GetPlaybackStatus: Handle: %08X, Status: OPEN_HAWOSTATUS_PAUSE, buffer is paused", hHandle);
+#endif
 			return OPEN_HAWOSTATUS_PAUSE;
 		}
 
@@ -798,14 +800,33 @@ extern "C" {
 
 		if (vs.BuffersQueued == 0)
 		{
+#ifdef _DEBUG
+			info("SEGAAPI_GetPlaybackStatus: Handle: %08X, Status: OPEN_HAWOSTATUS_STOP, buffersqueued is 0", hHandle);
+#endif
 			return OPEN_HAWOSTATUS_STOP;
 		}
 
 		if (!buffer->loop && vs.SamplesPlayed >= (min(buffer->size, buffer->endOffset) / bufferSampleSize(buffer)))
 		{
+#ifdef _DEBUG
+			info("SEGAAPI_GetPlaybackStatus: Handle: %08X, Status: OPEN_HAWOSTATUS_STOP, Loop false and samples played bigger", hHandle);
+#endif
 			return OPEN_HAWOSTATUS_STOP;
 		}
-		return (buffer->playing) ? OPEN_HAWOSTATUS_ACTIVE : OPEN_HAWOSTATUS_STOP;
+		if (buffer->playing)
+		{
+#ifdef _DEBUG
+			info("SEGAAPI_GetPlaybackStatus: Handle: %08X, Status: OPEN_HAWOSTATUS_ACTIVE, playing true!", hHandle);
+#endif
+			return OPEN_HAWOSTATUS_ACTIVE;
+		}
+		else
+		{
+#ifdef _DEBUG
+			info("SEGAAPI_GetPlaybackStatus: Handle: %08X, Status: OPEN_HAWOSTATUS_STOP, Playing false!", hHandle);
+#endif
+			return OPEN_HAWOSTATUS_STOP;
+		}
 	}
 
 	__declspec(dllexport) OPENSEGASTATUS SEGAAPI_SetReleaseState(void* hHandle, int bSet)
