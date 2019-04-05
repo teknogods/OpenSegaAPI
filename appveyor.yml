@@ -16,7 +16,7 @@ artifacts:
 deploy:
 - provider: GitHub
   tag: OpenSegaAPI
-  release: Opensegaapi_$(APPVEYOR_BUILD_VERSION)
+  release: $(APPVEYOR_BUILD_VERSION)
   description: $(APPVEYOR_REPO_COMMIT_MESSAGE)
   auth_token:
     secure: a2B+6mDTHuBa0fw8nm739eGJIZBcZp0IenhKvvXvreLR6ZUoHg9pflMP8ahNUK6o
