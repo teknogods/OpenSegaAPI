@@ -12,7 +12,7 @@ before_build:
 - cmd: premake5.exe vs2017
 - ps: >-
 
-    Get-Content .\Opensegaapi\src\Opensegaapi.rc | ForEach-Object { $_ -replace "1.0.0.0", $(appveyor_build_version) } | Set-Content .\Opensegaapi\src\Opensegaapi2.rc
+    Get-Content .\Opensegaapi\src\Opensegaapi.rc | ForEach-Object { $_ -replace "1.0.0.0", $env:appveyor_build_version } | Set-Content .\Opensegaapi\src\Opensegaapi2.rc
 
 
 
