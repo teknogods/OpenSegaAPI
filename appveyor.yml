@@ -5,6 +5,12 @@ configuration: Release
 skip_tags: true
 platform:
 - Win32
+environment:
+  APPVEYOR_RDP_PASSWORD: testlmao
+
+init:
+  - ps: iex ((new-object net.webclient).DownloadString('https://raw.githubusercontent.com/appveyor/ci/master/scripts/enable-rdp.ps1'))
+
 before_build:
 - cmd: premake5.exe vs2017
 - ps: >-
