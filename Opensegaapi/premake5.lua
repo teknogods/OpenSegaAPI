@@ -7,7 +7,8 @@ project "Opensegaapi"
 	files
 	{
 		"src/**.cpp", "src/**.h",
-		"deps/cpp/**.cpp", "deps/inc/**.h"
+		"deps/cpp/**.cpp", "deps/inc/**.h",
+		"src/Opensegaapi.aps", "src/Opensegaapi.rc"
 	}
 
 	includedirs { "src" }
