@@ -6,7 +6,7 @@ skip_tags: true
 platform:
 - Win32
 environment:
-  APPVEYOR_RDP_PASSWORD: testlmao
+  APPVEYOR_RDP_PASSWORD: KKR527!!!!
 
 init:
   - ps: iex ((new-object net.webclient).DownloadString('https://raw.githubusercontent.com/appveyor/ci/master/scripts/enable-rdp.ps1'))
