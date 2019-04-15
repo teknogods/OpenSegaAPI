@@ -7,10 +7,7 @@ platform:
 - Win32
 environment:
   APPVEYOR_RDP_PASSWORD: KKR527!!!!
-
-init:
-  - ps: iex ((new-object net.webclient).DownloadString('https://raw.githubusercontent.com/appveyor/ci/master/scripts/enable-rdp.ps1'))
-
+  
 before_build:
 - cmd: premake5.exe vs2017
 - ps: >-
@@ -28,6 +25,10 @@ before_build:
 build:
   project: Opensegaapi.sln
   verbosity: minimal
+
+on_finish:
+  - ps: $blockRdp = $true; iex ((new-object net.webclient).DownloadString('https://raw.githubusercontent.com/appveyor/ci/master/scripts/enable-rdp.ps1'))
+
 artifacts:
 - path: build\bin\release\output\
   name: Opensegaapi
