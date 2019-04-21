@@ -5,11 +5,20 @@ configuration: Release
 skip_tags: true
 platform:
 - Win32
+  
 before_build:
 - cmd: premake5.exe vs2017
+- ps: >-
+    Get-Content .\Opensegaapi\src\Opensegaapi.rc | ForEach-Object { $_ -replace "1.0.0.0", $env:appveyor_build_version } | Set-Content .\Opensegaapi\src\Opensegaapi2.rc
+    
+    del .\Opensegaapi\src\Opensegaapi.rc
+    
+    mv .\Opensegaapi\src\Opensegaapi2.rc .\Opensegaapi\src\Opensegaapi.rc
+
 build:
   project: Opensegaapi.sln
   verbosity: minimal
+
 artifacts:
 - path: build\bin\release\output\
   name: Opensegaapi
