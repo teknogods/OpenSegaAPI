@@ -719,15 +719,18 @@ extern "C" {
 			return 0;
 		}
 
-#ifdef _DEBUG
-		info("SEGAAPI_GetPlaybackPosition: Handle: %08X", hHandle);
-#endif
-
 		OPEN_segaapiBuffer_t* buffer = (OPEN_segaapiBuffer_t*)hHandle;
 
 		XAUDIO2_VOICE_STATE vs;
 		buffer->xaVoice->GetState(&vs);
-		return (vs.SamplesPlayed * (buffer->xaFormat.wBitsPerSample / 8) * buffer->xaFormat.nChannels) % buffer->size;
+
+		unsigned int result = (vs.SamplesPlayed * (buffer->xaFormat.wBitsPerSample / 8) * buffer->xaFormat.nChannels) % buffer->size;
+
+#ifdef _DEBUG
+		info("SEGAAPI_GetPlaybackPosition: Handle: %08X Samples played: %08d BitsPerSample %08d/%08d nChannels %08d bufferSize %08d Result: %08X", hHandle, vs.SamplesPlayed, buffer->xaFormat.wBitsPerSample, (buffer->xaFormat.wBitsPerSample / 8), buffer->xaFormat.nChannels, buffer->size, result);
+#endif
+
+		return result;
 	}
 
 	static void updateRouting(OPEN_segaapiBuffer_t* buffer);
