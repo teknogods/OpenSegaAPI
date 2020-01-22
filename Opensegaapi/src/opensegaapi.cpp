@@ -865,7 +865,7 @@ extern "C" {
 		return OPEN_SEGA_SUCCESS;
 	}
 
-	int SEGAAPI_SetGlobalEAXProperty(GUID * guid, unsigned long ulProperty, void * pData, unsigned long ulDataSize)
+	__declspec(dllexport) int SEGAAPI_SetGlobalEAXProperty(GUID * guid, unsigned long ulProperty, void * pData, unsigned long ulDataSize)
 	{
 #ifdef _DEBUG
 		info("SEGAAPI_SetGlobalEAXProperty:");
@@ -879,7 +879,7 @@ extern "C" {
 	{
 
 #ifdef _DEBUG
-		info("SEGAAPI_Init: hello harmfull world");
+		info("SEGAAPI_Init");
 #endif
 
 		CoInitialize(nullptr);
@@ -1169,7 +1169,7 @@ extern "C" {
 		return OPEN_SEGA_SUCCESS;
 	}
 
-	int SEGAAPI_GetSynthParam(void * hHandle, OPEN_HASYNTHPARAMSEXT param)
+	__declspec(dllexport) int SEGAAPI_GetSynthParam(void * hHandle, OPEN_HASYNTHPARAMSEXT param)
 	{
 #ifdef _DEBUG
 		info("SEGAAPI_GetSynthParam: hHandle: %08X OPEN_HASYNTHPARAMSEXT: %08X", hHandle, param);
@@ -1290,7 +1290,7 @@ extern "C" {
 		}
 
 #ifdef _DEBUG
-		info("loopdata\t%08X\t%08X\t%08X\t%08X\t%d\t%d", hHandle, loopStart, loopEnd, endOffset, loopState, buffer->size);
+		info("Loopdata: hHandle: %08X, loopStart: %08X, loopEnd: %08X, endOffset: %08X, loopState: %d, size: %d", hHandle, loopStart, loopEnd, endOffset, loopState, buffer->size);
 #endif
 
 		for (int i = 0; i < dwNumSynthParams; i++)
