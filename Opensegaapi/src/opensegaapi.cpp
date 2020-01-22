@@ -50,7 +50,7 @@ void info(const char* format, ...)
 	char buffer[1024];
 
 	va_start(args, format);
-	int len = _vsnprintf(buffer, sizeof(buffer), format, args);
+	int len = _vsnprintf_s(buffer, sizeof(buffer), format, args);
 	va_end(args);
 
 	buffer[len] = '\n';
@@ -109,6 +109,7 @@ struct OPEN_segaapiBuffer_t
 	size_t size;
 	bool playing;
 	bool paused;
+	bool playWithSetup;
 
 	WAVEFORMATEX xaFormat;
 
@@ -171,9 +172,12 @@ void defer_buffer_call(OPEN_segaapiBuffer_t* buffer, const TFn& fn)
 	fn();
 }
 
-static void dumpWaveBuffer(const char* path, unsigned int channels, unsigned int sampleRate, unsigned int sampleBits,
-	void* data, size_t size)
+static void dumpWaveBuffer(const char* path, unsigned int channels, unsigned int sampleRate, unsigned int sampleBits, void* data, size_t size)
 {
+#ifdef _DEBUG
+	info("dumpWaveBuffer path %s channels %d sampleRate %d sampleBits %d size %d", path, channels, sampleRate, sampleBits, size);
+#endif
+
 	struct RIFF_Header
 	{
 		char chunkID[4];
@@ -248,36 +252,6 @@ static void dumpWaveBuffer(const char* path, unsigned int channels, unsigned int
 static unsigned int bufferSampleSize(OPEN_segaapiBuffer_t* buffer)
 {
 	return buffer->channels * ((buffer->sampleFormat == OPEN_HASF_SIGNED_16PCM) ? 2 : 1);
-}
-
-static void updateBufferLoop(OPEN_segaapiBuffer_t* buffer)
-{
-	if (!buffer->defers.empty())
-	{
-		return;
-	}
-
-	CHECK_HR(buffer->xaVoice->FlushSourceBuffers());
-	buffer->xaBuffer.Flags = 0;
-	buffer->xaBuffer.AudioBytes = buffer->size;
-	buffer->xaBuffer.pAudioData = buffer->data;
-	buffer->xaBuffer.LoopCount = (buffer->loop) ? XAUDIO2_LOOP_INFINITE : 0;
-
-	if (buffer->loop)
-	{
-		buffer->xaBuffer.LoopBegin = buffer->startLoop / bufferSampleSize(buffer);
-		buffer->xaBuffer.LoopLength = (min(buffer->endLoop, buffer->endOffset) - buffer->startLoop) /
-			bufferSampleSize(buffer);
-		buffer->xaBuffer.PlayLength = 0;
-	}
-	else
-	{
-		buffer->xaBuffer.PlayLength = buffer->endOffset / bufferSampleSize(buffer);
-		buffer->xaBuffer.LoopBegin = 0;
-		buffer->xaBuffer.LoopLength = 0;
-	}
-
-	buffer->xaVoice->SubmitSourceBuffer(&buffer->xaBuffer);
 }
 
 static void updateSynthOnPlay(OPEN_segaapiBuffer_t* buffer, unsigned int offset, size_t length)
@@ -385,38 +359,6 @@ static void updateSynthOnPlay(OPEN_segaapiBuffer_t* buffer, unsigned int offset,
 	//}
 }
 
-static void updateBufferData(OPEN_segaapiBuffer_t* buffer, unsigned int offset, size_t length)
-{
-	// don't update with pending defers
-	if (!buffer->defers.empty())
-	{
-		return;
-	}
-
-	if (offset == -1)
-	{
-		CHECK_HR(buffer->xaVoice->FlushSourceBuffers());
-		buffer->xaBuffer.Flags = 0;
-		buffer->xaBuffer.AudioBytes = buffer->size;
-		buffer->xaBuffer.pAudioData = buffer->data;
-		buffer->xaBuffer.LoopCount = 0;
-		buffer->xaBuffer.LoopBegin = 0;
-		buffer->xaBuffer.LoopLength = 0;
-		buffer->xaVoice->SubmitSourceBuffer(&buffer->xaBuffer);
-	}
-	else
-	{
-		// restart with looping enabled
-		// this seems to make XA2 just reread the buffer, where criau put buffer data
-		CHECK_HR(buffer->xaVoice->FlushSourceBuffers());
-		buffer->xaBuffer.Flags = 0;
-		buffer->xaBuffer.AudioBytes = buffer->size;
-		buffer->xaBuffer.pAudioData = buffer->data;
-		buffer->xaBuffer.LoopCount = XAUDIO2_LOOP_INFINITE;
-		buffer->xaVoice->SubmitSourceBuffer(&buffer->xaBuffer);
-	}
-}
-
 static void resetBuffer(OPEN_segaapiBuffer_t* buffer)
 {
 	buffer->startLoop = 0;
@@ -424,6 +366,7 @@ static void resetBuffer(OPEN_segaapiBuffer_t* buffer)
 	buffer->endLoop = buffer->size;
 	buffer->loop = false;
 	buffer->paused = false;
+	buffer->playWithSetup = false;
 	buffer->sendRoutes[0] = OPEN_HA_FRONT_LEFT_PORT;
 	buffer->sendRoutes[1] = OPEN_HA_FRONT_RIGHT_PORT;
 	buffer->sendRoutes[2] = OPEN_HA_UNUSED_PORT;
@@ -478,21 +421,72 @@ static WRL::ComPtr<IXAudio2> g_xa2;
 static IXAudio2MasteringVoice* g_masteringVoice;
 static IXAudio2SubmixVoice* g_submixVoices[6];
 
+static void updateBufferNew(OPEN_segaapiBuffer_t* buffer, unsigned int offset, size_t length)
+{
+	// don't update with pending defers
+	if (!buffer->defers.empty())
+	{
+#ifdef _DEBUG
+		info("updateBufferNew: DEFER!");
+#endif
+		return;
+	}
+
+	CHECK_HR(buffer->xaVoice->FlushSourceBuffers());
+
+	buffer->xaBuffer.Flags = 0;
+	buffer->xaBuffer.AudioBytes = buffer->size;
+	buffer->xaBuffer.pAudioData = buffer->data;
+
+	if (buffer->loop)
+	{
+#ifdef _DEBUG
+		info("updateBufferNew: loop");
+#endif
+		// Note: Sega uses byte offsets for begin and end
+		//       Xaudio2 uses start sample and length in samples
+		buffer->xaBuffer.PlayBegin = buffer->startLoop / bufferSampleSize(buffer);
+		buffer->xaBuffer.PlayLength = (min(buffer->endLoop, buffer->endOffset) - buffer->startLoop) / bufferSampleSize(buffer);
+		buffer->xaBuffer.LoopBegin = buffer->xaBuffer.PlayBegin;
+		buffer->xaBuffer.LoopLength = buffer->xaBuffer.PlayLength;
+		buffer->xaBuffer.LoopCount = XAUDIO2_LOOP_INFINITE;
+		buffer->xaBuffer.pContext = NULL;
+	}
+	else
+	{
+#ifdef _DEBUG
+		info("updateBufferNew: no loop");
+#endif
+		buffer->xaBuffer.PlayBegin = buffer->startLoop / bufferSampleSize(buffer);
+		buffer->xaBuffer.PlayLength = (min(buffer->endLoop, buffer->endOffset) - buffer->startLoop) / bufferSampleSize(buffer);
+		buffer->xaBuffer.LoopBegin = 0;
+		buffer->xaBuffer.LoopLength = 0;
+		buffer->xaBuffer.LoopCount = 0;
+		buffer->xaBuffer.pContext = NULL;
+	}
+
+	buffer->xaVoice->SubmitSourceBuffer(&buffer->xaBuffer);
+
+	// Uncomment to dump audio buffers to wav files (super slow)
+	/*auto sampleBits = (buffer->sampleFormat == OPEN_HASF_SIGNED_16PCM) ? 16 : 8;
+	char path[255];
+	sprintf(path, "C:\\dump\\%08X.wav", &buffer);
+	dumpWaveBuffer(path, buffer->channels, buffer->sampleRate, sampleBits, buffer->data, buffer->size);*/
+}
+
 extern "C" {
-	__declspec(dllexport) OPENSEGASTATUS SEGAAPI_CreateBuffer(OPEN_HAWOSEBUFFERCONFIG* pConfig, OPEN_HAWOSEGABUFFERCALLBACK pCallback,
-		unsigned int dwFlags, void* * phHandle)
+	__declspec(dllexport) OPENSEGASTATUS SEGAAPI_CreateBuffer(OPEN_HAWOSEBUFFERCONFIG* pConfig, OPEN_HAWOSEGABUFFERCALLBACK pCallback, unsigned int dwFlags, void* * phHandle)
 	{
 		if ((phHandle == NULL) || (pConfig == NULL))
 		{
 			return OPENSEGAERR_BAD_POINTER;
 		}
 
-#ifdef _DEBUG
-		info("SEGAAPI_CreateBuffer: flags: %08X", dwFlags);;
-		info("pConfig Variables: SampleRate: %d, byNumChans: %d, dwPriority: %d, dwSampleFormat: %d", pConfig->dwSampleRate, pConfig->byNumChans, pConfig->dwPriority, pConfig->dwSampleFormat);
-#endif
-
 		OPEN_segaapiBuffer_t* buffer = new OPEN_segaapiBuffer_t;
+
+#ifdef _DEBUG
+		info("SEGAAPI_CreateBuffer: hHandle: %08X synth: %d, mem caller: %d, mem last: %d, mem alloc: %d, size: %d SampleRate: %d, byNumChans: %d, dwPriority: %d, dwSampleFormat: %d", buffer, (dwFlags & OPEN_HABUF_SYNTH_BUFFER), (dwFlags & OPEN_HABUF_ALLOC_USER_MEM) >> 1, (dwFlags & OPEN_HABUF_USE_MAPPED_MEM) >> 2, dwFlags == 0, pConfig->mapData.dwSize, pConfig->dwSampleRate, pConfig->byNumChans, pConfig->dwPriority, pConfig->dwSampleFormat);
+#endif
 
 		buffer->playing = false;
 		buffer->callback = pCallback;
@@ -504,14 +498,17 @@ extern "C" {
 		buffer->size = pConfig->mapData.dwSize;
 		pConfig->mapData.dwOffset = 0;
 
+		// Use buffer supplied by caller
 		if (dwFlags & OPEN_HABUF_ALLOC_USER_MEM)
 		{
 			buffer->data = (uint8_t*)pConfig->mapData.hBufferHdr;
 		}
+		// Reuse buffer
 		else if (dwFlags & OPEN_HABUF_USE_MAPPED_MEM)
 		{
 			buffer->data = (uint8_t*)pConfig->mapData.hBufferHdr;
 		}
+		// Allocate new buffer (caller will fill it later)
 		else
 		{
 			buffer->data = (uint8_t*)malloc(buffer->size);
@@ -524,7 +521,7 @@ extern "C" {
 		auto channels = pConfig->byNumChans;
 
 		buffer->xaFormat.cbSize = sizeof(WAVEFORMATEX);
-		buffer->xaFormat.nAvgBytesPerSec = (sampleRate * sampleBits * channels) / 8;;
+		buffer->xaFormat.nAvgBytesPerSec = (sampleRate * sampleBits * channels) / 8;
 		buffer->xaFormat.nSamplesPerSec = sampleRate;
 		buffer->xaFormat.wBitsPerSample = sampleBits;
 		buffer->xaFormat.nChannels = channels;
@@ -543,6 +540,7 @@ extern "C" {
 		resetBuffer(buffer);
 
 		*phHandle = buffer;
+		
 		return OPEN_SEGA_SUCCESS;
 	}
 
@@ -578,8 +576,7 @@ extern "C" {
 		return buffer->userData;
 	}
 
-	__declspec(dllexport) OPENSEGASTATUS SEGAAPI_UpdateBuffer(void* hHandle, unsigned int dwStartOffset,
-		unsigned int dwLength)
+	__declspec(dllexport) OPENSEGASTATUS SEGAAPI_UpdateBuffer(void* hHandle, unsigned int dwStartOffset, unsigned int dwLength)
 	{
 		if (hHandle == NULL)
 		{
@@ -592,8 +589,7 @@ extern "C" {
 
 		OPEN_segaapiBuffer_t* buffer = (OPEN_segaapiBuffer_t*)hHandle;
 
-		updateBufferData(buffer, dwStartOffset, dwLength);
-		updateBufferLoop(buffer);
+		updateBufferNew(buffer, dwStartOffset, dwLength);
 		return OPEN_SEGA_SUCCESS;
 	}
 
@@ -662,8 +658,6 @@ extern "C" {
 		defer_buffer_call(buffer, [=]()
 		{
 			buffer->xaVoice->SetSourceSampleRate(dwSampleRate);
-
-			updateBufferLoop(buffer);
 		});
 
 		return OPEN_SEGA_SUCCESS;
@@ -682,11 +676,6 @@ extern "C" {
 
 		OPEN_segaapiBuffer_t* buffer = (OPEN_segaapiBuffer_t*)hHandle;
 		buffer->loop = bDoContinuousLooping;
-
-		defer_buffer_call(buffer, [=]()
-		{
-			updateBufferLoop(buffer);
-		});
 
 		return OPEN_SEGA_SUCCESS;
 	}
@@ -749,13 +738,17 @@ extern "C" {
 		OPEN_segaapiBuffer_t* buffer = (OPEN_segaapiBuffer_t*)hHandle;
 
 		updateRouting(buffer);
+		updateBufferNew(buffer, -1, -1);
 
-		updateBufferData(buffer, -1, -1);
-		updateBufferLoop(buffer);
-		updateSynthOnPlay(buffer, -1, -1);
 		buffer->playing = true;
 		buffer->paused = false;
-		CHECK_HR(buffer->xaVoice->Start());
+
+		// Uncomment to mute music
+		//if (buffer->playWithSetup)
+		//{
+			CHECK_HR(buffer->xaVoice->Start());
+		//}
+			
 		return OPEN_SEGA_SUCCESS;
 	}
 
@@ -872,11 +865,21 @@ extern "C" {
 		return OPEN_SEGA_SUCCESS;
 	}
 
+	int SEGAAPI_SetGlobalEAXProperty(GUID * guid, unsigned long ulProperty, void * pData, unsigned long ulDataSize)
+	{
+#ifdef _DEBUG
+		info("SEGAAPI_SetGlobalEAXProperty:");
+#endif
+
+		// Everything is fine
+		return TRUE;
+	}
+
 	__declspec(dllexport) OPENSEGASTATUS SEGAAPI_Init(void)
 	{
 
 #ifdef _DEBUG
-		info("SEGAAPI_Init");
+		info("SEGAAPI_Init: hello harmfull world");
 #endif
 
 		CoInitialize(nullptr);
@@ -925,6 +928,7 @@ extern "C" {
 		setSubmixVoice(OPEN_HA_REAR_LEFT_PORT, 0.0f, 0.0f, 0.0f, 0.0f, 1.0f, 0.0f);
 		setSubmixVoice(OPEN_HA_REAR_RIGHT_PORT, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 1.0f);
 		setSubmixVoice(OPEN_HA_LFE_PORT, 0.0f, 0.0f, 0.0f, 1.0f, 0.0f, 0.0f);
+
 		return OPEN_SEGA_SUCCESS;
 	}
 
@@ -1010,8 +1014,7 @@ extern "C" {
 		}
 	}
 
-	__declspec(dllexport) OPENSEGASTATUS SEGAAPI_SetSendRouting(void* hHandle, unsigned int dwChannel, unsigned int dwSend,
-		OPEN_HAROUTING dwDest)
+	__declspec(dllexport) OPENSEGASTATUS SEGAAPI_SetSendRouting(void* hHandle, unsigned int dwChannel, unsigned int dwSend, OPEN_HAROUTING dwDest)
 	{
 #ifdef _DEBUG
 		info("SEGAAPI_SetSendRouting: hHandle: %08X dwChannel: %08X dwSend: %08X dwDest: %08X", hHandle, dwChannel, dwSend, dwDest);
@@ -1024,8 +1027,7 @@ extern "C" {
 		return OPEN_SEGA_SUCCESS;
 	}
 
-	__declspec(dllexport) OPENSEGASTATUS SEGAAPI_SetSendLevel(void* hHandle, unsigned int dwChannel, unsigned int dwSend,
-		unsigned int dwLevel)
+	__declspec(dllexport) OPENSEGASTATUS SEGAAPI_SetSendLevel(void* hHandle, unsigned int dwChannel, unsigned int dwSend, unsigned int dwLevel)
 	{
 #ifdef _DEBUG
 		info("SEGAAPI_SetSendLevel: hHandle: %08X dwChannel: %08X dwSend: %08X dwLevel: %08X", hHandle, dwChannel, dwSend, dwLevel);
@@ -1140,25 +1142,42 @@ extern "C" {
 		int realParam = mapping[param];
 
 		OPEN_segaapiBuffer_t* buffer = (OPEN_segaapiBuffer_t*)hHandle;
-		tsf_hydra_genamount amount;
-		amount.shortAmount = lPARWValue;
-		tsf_region_operator(buffer->region, realParam, &amount);
+		//tsf_hydra_genamount amount;
+		//amount.shortAmount = lPARWValue;
+		//tsf_region_operator(buffer->region, realParam, &amount);
 
 		if (param == OPEN_HAVP_ATTENUATION)
 		{
-			float volume = tsf_decibelsToGain(0.0f - (amount.shortAmount / 10.0f));
+			float volume = tsf_decibelsToGain(0.0f - lPARWValue / 10.0f);
 
 			buffer->xaVoice->SetVolume(volume);
+#ifdef _DEBUG
+			info("SEGAAPI_SetSynthParam: OPEN_HAVP_ATTENUATION gain: %f dB: %d", volume, lPARWValue);
+#endif
 		}
 		else if (param == OPEN_HAVP_PITCH)
 		{
-			buffer->xaVoice->SetFrequencyRatio(XAudio2SemitonesToFrequencyRatio(lPARWValue / 100.0f));
+			float semiTones = lPARWValue / 100.0f;
+			float freqRatio = XAudio2SemitonesToFrequencyRatio(semiTones);
+
+			buffer->xaVoice->SetFrequencyRatio(freqRatio);
+#ifdef _DEBUG
+			info("SEGAAPI_SetSynthParam: OPEN_HAVP_PITCH hHandle: %08X semitones: %f freqRatio: %f", hHandle, semiTones, freqRatio);
+#endif
 		}
+
 		return OPEN_SEGA_SUCCESS;
 	}
 
-	__declspec(dllexport) OPENSEGASTATUS SEGAAPI_SetSynthParamMultiple(void* hHandle, unsigned int dwNumParams,
-		OPEN_SynthParamSet* pSynthParams)
+	int SEGAAPI_GetSynthParam(void * hHandle, OPEN_HASYNTHPARAMSEXT param)
+	{
+#ifdef _DEBUG
+		info("SEGAAPI_GetSynthParam: hHandle: %08X OPEN_HASYNTHPARAMSEXT: %08X", hHandle, param);
+#endif
+		return 0; //todo not sure if actually used
+	}
+
+	__declspec(dllexport) OPENSEGASTATUS SEGAAPI_SetSynthParamMultiple(void* hHandle, unsigned int dwNumParams, OPEN_SynthParamSet* pSynthParams)
 	{
 #ifdef _DEBUG
 		info("SEGAAPI_SetSynthParamMultiple: hHandle: %08X dwNumParams: %08X pSynthParams: %08X", hHandle, dwNumParams, pSynthParams);
@@ -1170,8 +1189,7 @@ extern "C" {
 		return OPEN_SEGA_SUCCESS;
 	}
 
-	__declspec(dllexport) OPENSEGASTATUS SEGAAPI_SetChannelVolume(void* hHandle, unsigned int dwChannel,
-		unsigned int dwVolume)
+	__declspec(dllexport) OPENSEGASTATUS SEGAAPI_SetChannelVolume(void* hHandle, unsigned int dwChannel, unsigned int dwVolume)
 	{
 #ifdef _DEBUG
 		info("SEGAAPI_SetChannelVolume: hHandle: %08X dwChannel: %08X dwVolume: %08X", hHandle, dwChannel, dwVolume);
@@ -1212,21 +1230,26 @@ extern "C" {
 	)
 	{
 #ifdef _DEBUG
-		info("SEGAAPI_PlayWithSetup: hHandle: %08X dwNumSendRouteParams: %08X pSendRouteParams: %08X dwNumSendLevelParams: %08X pSendLevelParams: %08X dwNumVoiceParams: %08X pVoiceParams: %08X dwNumSynthParams: %08X pSynthParams: %08X", hHandle, dwNumSendRouteParams, *pSendRouteParams, dwNumSendLevelParams, *pSendLevelParams, dwNumVoiceParams, *pVoiceParams, dwNumSynthParams, *pSynthParams);
+		info("SEGAAPI_PlayWithSetup: hHandle: %08X dwNumSendRouteParams: %d pSendRouteParams: %08X dwNumSendLevelParams: %d pSendLevelParams: %08X dwNumVoiceParams: %d pVoiceParams: %08X dwNumSynthParams: %d pSynthParams: %08X", hHandle, dwNumSendRouteParams, *pSendRouteParams, dwNumSendLevelParams, *pSendLevelParams, dwNumVoiceParams, *pVoiceParams, dwNumSynthParams, *pSynthParams);
+		info("dwNumSynthParams: %d", dwNumSynthParams);
 #endif
 		OPEN_segaapiBuffer_t* buffer = (OPEN_segaapiBuffer_t*)hHandle;
+		buffer->playWithSetup = true;
 
 		for (int i = 0; i < dwNumSendRouteParams; i++)
 		{
-			SEGAAPI_SetSendRouting(hHandle, pSendRouteParams[i].dwChannel, pSendRouteParams[i].dwSend,
-				pSendRouteParams[i].dwDest);
+			SEGAAPI_SetSendRouting(hHandle, pSendRouteParams[i].dwChannel, pSendRouteParams[i].dwSend, pSendRouteParams[i].dwDest);
 		}
 
 		for (int i = 0; i < dwNumSendLevelParams; i++)
 		{
-			SEGAAPI_SetSendLevel(hHandle, pSendLevelParams[i].dwChannel, pSendLevelParams[i].dwSend,
-				pSendLevelParams[i].dwLevel);
+			SEGAAPI_SetSendLevel(hHandle, pSendLevelParams[i].dwChannel, pSendLevelParams[i].dwSend, pSendLevelParams[i].dwLevel);
 		}
+
+		unsigned int loopStart = 0;
+		unsigned int loopEnd = 0;
+		unsigned int loopState = 0;
+		unsigned int endOffset = 0;
 
 		for (int i = 0; i < dwNumVoiceParams; i++)
 		{
@@ -1234,24 +1257,41 @@ extern "C" {
 			{
 			case OPEN_VOICEIOCTL_SET_START_LOOP_OFFSET:
 				SEGAAPI_SetStartLoopOffset(hHandle, pVoiceParams[i].dwParam1);
+				loopStart = pVoiceParams[i].dwParam1;
 				break;
 			case OPEN_VOICEIOCTL_SET_END_LOOP_OFFSET:
 				SEGAAPI_SetEndLoopOffset(hHandle, pVoiceParams[i].dwParam1);
+				loopEnd = pVoiceParams[i].dwParam1;
 				break;
 			case OPEN_VOICEIOCTL_SET_END_OFFSET:
 				SEGAAPI_SetEndOffset(hHandle, pVoiceParams[i].dwParam1);
+				endOffset = pVoiceParams[i].dwParam1;
 				break;
 			case OPEN_VOICEIOCTL_SET_LOOP_STATE:
 				SEGAAPI_SetLoopState(hHandle, pVoiceParams[i].dwParam1);
+				loopState = pVoiceParams[i].dwParam1;
 				break;
 			case OPEN_VOICEIOCTL_SET_NOTIFICATION_POINT:
+#ifdef _DEBUG
+				info("Unimplemented! OPEN_VOICEIOCTL_SET_NOTIFICATION_POINT");
+#endif
 				break;
 			case OPEN_VOICEIOCTL_CLEAR_NOTIFICATION_POINT:
+#ifdef _DEBUG
+				info("Unimplemented! OPEN_VOICEIOCTL_CLEAR_NOTIFICATION_POINT");
+#endif
 				break;
 			case OPEN_VOICEIOCTL_SET_NOTIFICATION_FREQUENCY:
+#ifdef _DEBUG
+				info("Unimplemented! OPEN_VOICEIOCTL_SET_NOTIFICATION_FREQUENCY");
+#endif
 				break;
 			}
 		}
+
+#ifdef _DEBUG
+		info("loopdata\t%08X\t%08X\t%08X\t%08X\t%d\t%d", hHandle, loopStart, loopEnd, endOffset, loopState, buffer->size);
+#endif
 
 		for (int i = 0; i < dwNumSynthParams; i++)
 		{
