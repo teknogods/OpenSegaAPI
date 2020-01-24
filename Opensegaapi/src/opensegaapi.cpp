@@ -475,11 +475,14 @@ static void updateBufferNew(OPEN_segaapiBuffer_t* buffer, unsigned int offset, s
 }
 
 extern "C" {
-	__declspec(dllexport) OPENSEGASTATUS SEGAAPI_CreateBuffer(OPEN_HAWOSEBUFFERCONFIG* pConfig, OPEN_HAWOSEGABUFFERCALLBACK pCallback, unsigned int dwFlags, void* * phHandle)
+	__declspec(dllexport) OPEN_SEGASTATUS SEGAAPI_CreateBuffer(OPEN_HAWOSEBUFFERCONFIG* pConfig, OPEN_HAWOSEGABUFFERCALLBACK pCallback, unsigned int dwFlags, void* * phHandle)
 	{
-		if ((phHandle == NULL) || (pConfig == NULL))
+		if (phHandle == NULL || pConfig == NULL)
 		{
-			return OPENSEGAERR_BAD_POINTER;
+#ifdef _DEBUG
+			info("SEGAAPI_CreateBuffer: Handle: %08X, Status: OPEN_SEGAERR_BAD_POINTER", phHandle);
+#endif
+			return OPEN_SEGAERR_BAD_POINTER;
 		}
 
 		OPEN_segaapiBuffer_t* buffer = new OPEN_segaapiBuffer_t;
@@ -544,11 +547,14 @@ extern "C" {
 		return OPEN_SEGA_SUCCESS;
 	}
 
-	__declspec(dllexport) OPENSEGASTATUS SEGAAPI_SetUserData(void* hHandle, void* hUserData)
+	__declspec(dllexport) OPEN_SEGASTATUS SEGAAPI_SetUserData(void* hHandle, void* hUserData)
 	{
 		if (hHandle == NULL)
 		{
-			return OPENSEGAERR_BAD_HANDLE;
+#ifdef _DEBUG
+			info("SEGAAPI_SetUserData: Handle: %08X, Status: OPEN_SEGAERR_BAD_HANDLE", hHandle);
+#endif
+			return OPEN_SEGAERR_BAD_HANDLE;
 		}
 
 #ifdef _DEBUG
@@ -576,11 +582,14 @@ extern "C" {
 		return buffer->userData;
 	}
 
-	__declspec(dllexport) OPENSEGASTATUS SEGAAPI_UpdateBuffer(void* hHandle, unsigned int dwStartOffset, unsigned int dwLength)
+	__declspec(dllexport) OPEN_SEGASTATUS SEGAAPI_UpdateBuffer(void* hHandle, unsigned int dwStartOffset, unsigned int dwLength)
 	{
 		if (hHandle == NULL)
 		{
-			return OPENSEGAERR_BAD_HANDLE;
+#ifdef _DEBUG
+			info("SEGAAPI_UpdateBuffer: Handle: %08X, Status: OPEN_SEGAERR_BAD_HANDLE", hHandle);
+#endif
+			return OPEN_SEGAERR_BAD_HANDLE;
 		}
 
 #ifdef _DEBUG
@@ -593,11 +602,14 @@ extern "C" {
 		return OPEN_SEGA_SUCCESS;
 	}
 
-	__declspec(dllexport) OPENSEGASTATUS SEGAAPI_SetEndOffset(void* hHandle, unsigned int dwOffset)
+	__declspec(dllexport) OPEN_SEGASTATUS SEGAAPI_SetEndOffset(void* hHandle, unsigned int dwOffset)
 	{
 		if (hHandle == NULL)
 		{
-			return OPENSEGAERR_BAD_HANDLE;
+#ifdef _DEBUG
+			info("SEGAAPI_SetEndOffset: Handle: %08X, Status: OPEN_SEGAERR_BAD_HANDLE", hHandle);
+#endif
+			return OPEN_SEGAERR_BAD_HANDLE;
 		}
 
 #ifdef _DEBUG
@@ -609,11 +621,14 @@ extern "C" {
 		return OPEN_SEGA_SUCCESS;
 	}
 
-	__declspec(dllexport) OPENSEGASTATUS SEGAAPI_SetEndLoopOffset(void* hHandle, unsigned int dwOffset)
+	__declspec(dllexport) OPEN_SEGASTATUS SEGAAPI_SetEndLoopOffset(void* hHandle, unsigned int dwOffset)
 	{
 		if (hHandle == NULL)
 		{
-			return OPENSEGAERR_BAD_HANDLE;
+#ifdef _DEBUG
+			info("SEGAAPI_SetEndLoopOffset: Handle: %08X, Status: OPEN_SEGAERR_BAD_HANDLE", hHandle);
+#endif
+			return OPEN_SEGAERR_BAD_HANDLE;
 		}
 
 #ifdef _DEBUG
@@ -625,11 +640,14 @@ extern "C" {
 		return OPEN_SEGA_SUCCESS;
 	}
 
-	__declspec(dllexport) OPENSEGASTATUS SEGAAPI_SetStartLoopOffset(void* hHandle, unsigned int dwOffset)
+	__declspec(dllexport) OPEN_SEGASTATUS SEGAAPI_SetStartLoopOffset(void* hHandle, unsigned int dwOffset)
 	{
 		if (hHandle == NULL)
 		{
-			return OPENSEGAERR_BAD_HANDLE;
+#ifdef _DEBUG
+			info("SEGAAPI_SetStartLoopOffset: Handle: %08X, Status: OPEN_SEGAERR_BAD_HANDLE", hHandle);
+#endif
+			return OPEN_SEGAERR_BAD_HANDLE;
 		}
 
 #ifdef _DEBUG
@@ -641,11 +659,14 @@ extern "C" {
 		return OPEN_SEGA_SUCCESS;
 	}
 
-	__declspec(dllexport) OPENSEGASTATUS SEGAAPI_SetSampleRate(void* hHandle, unsigned int dwSampleRate)
+	__declspec(dllexport) OPEN_SEGASTATUS SEGAAPI_SetSampleRate(void* hHandle, unsigned int dwSampleRate)
 	{
 		if (hHandle == NULL)
 		{
-			return OPENSEGAERR_BAD_HANDLE;
+#ifdef _DEBUG
+			info("SEGAAPI_SetSampleRate: Handle: %08X, Status: OPEN_SEGAERR_BAD_HANDLE", hHandle);
+#endif
+			return OPEN_SEGAERR_BAD_HANDLE;
 		}
 
 #ifdef _DEBUG
@@ -663,15 +684,18 @@ extern "C" {
 		return OPEN_SEGA_SUCCESS;
 	}
 
-	__declspec(dllexport) OPENSEGASTATUS SEGAAPI_SetLoopState(void* hHandle, int bDoContinuousLooping)
+	__declspec(dllexport) OPEN_SEGASTATUS SEGAAPI_SetLoopState(void* hHandle, int bDoContinuousLooping)
 	{
 		if (hHandle == NULL)
 		{
-			return OPENSEGAERR_BAD_HANDLE;
+#ifdef _DEBUG
+			info("SEGAAPI_SetLoopState: Handle: %08X, Status: OPEN_SEGAERR_BAD_HANDLE", hHandle);
+#endif
+			return OPEN_SEGAERR_BAD_HANDLE;
 		}
 
 #ifdef _DEBUG
-		info("SEGAAPI_SetLoopState: Handle: %08X dwSampleRate: %08X", hHandle, bDoContinuousLooping);
+		info("SEGAAPI_SetLoopState: Handle: %08X bDoContinuousLooping: %d", hHandle, bDoContinuousLooping);
 #endif
 
 		OPEN_segaapiBuffer_t* buffer = (OPEN_segaapiBuffer_t*)hHandle;
@@ -680,11 +704,14 @@ extern "C" {
 		return OPEN_SEGA_SUCCESS;
 	}
 
-	__declspec(dllexport) OPENSEGASTATUS SEGAAPI_SetPlaybackPosition(void* hHandle, unsigned int dwPlaybackPos)
+	__declspec(dllexport) OPEN_SEGASTATUS SEGAAPI_SetPlaybackPosition(void* hHandle, unsigned int dwPlaybackPos)
 	{
 		if (hHandle == NULL)
 		{
-			return OPENSEGAERR_BAD_HANDLE;
+#ifdef _DEBUG
+			info("SEGAAPI_SetPlaybackPosition: Handle: %08X, Status: OPEN_SEGAERR_BAD_HANDLE", hHandle);
+#endif
+			return OPEN_SEGAERR_BAD_HANDLE;
 		}
 
 #ifdef _DEBUG
@@ -724,11 +751,14 @@ extern "C" {
 
 	static void updateRouting(OPEN_segaapiBuffer_t* buffer);
 
-	__declspec(dllexport) OPENSEGASTATUS SEGAAPI_Play(void* hHandle)
+	__declspec(dllexport) OPEN_SEGASTATUS SEGAAPI_Play(void* hHandle)
 	{
 		if (hHandle == NULL)
 		{
-			return OPENSEGAERR_BAD_HANDLE;
+#ifdef _DEBUG
+			info("SEGAAPI_Play: Handle: %08X, Status: OPEN_SEGAERR_BAD_HANDLE", hHandle);
+#endif
+			return OPEN_SEGAERR_BAD_HANDLE;
 		}
 
 #ifdef _DEBUG
@@ -752,11 +782,14 @@ extern "C" {
 		return OPEN_SEGA_SUCCESS;
 	}
 
-	__declspec(dllexport) OPENSEGASTATUS SEGAAPI_Stop(void* hHandle)
+	__declspec(dllexport) OPEN_SEGASTATUS SEGAAPI_Stop(void* hHandle)
 	{
 		if (hHandle == NULL)
 		{
-			return OPENSEGAERR_BAD_HANDLE;
+#ifdef _DEBUG
+			info("SEGAAPI_Stop: Handle: %08X, Status: OPEN_SEGAERR_BAD_HANDLE", hHandle);
+#endif
+			return OPEN_SEGAERR_BAD_HANDLE;
 		}
 
 #ifdef _DEBUG
@@ -775,9 +808,9 @@ extern "C" {
 		if (hHandle == NULL)
 		{
 #ifdef _DEBUG
-			info("SEGAAPI_GetPlaybackStatus: Handle: %08X, Status: OPENSEGAERR_BAD_HANDLE", hHandle);
+			info("SEGAAPI_GetPlaybackStatus: Handle: %08X, Status: OPEN_HAWOSTATUS_INVALID", hHandle);
 #endif
-			return OPEN_HAWOSTATUS(OPENSEGAERR_BAD_HANDLE);
+			return OPEN_HAWOSTATUS_INVALID;
 		}
 
 		OPEN_segaapiBuffer_t* buffer = (OPEN_segaapiBuffer_t*)hHandle;
@@ -825,11 +858,14 @@ extern "C" {
 		}
 	}
 
-	__declspec(dllexport) OPENSEGASTATUS SEGAAPI_SetReleaseState(void* hHandle, int bSet)
+	__declspec(dllexport) OPEN_SEGASTATUS SEGAAPI_SetReleaseState(void* hHandle, int bSet)
 	{
 		if (hHandle == NULL)
 		{
-			return OPENSEGAERR_BAD_HANDLE;
+#ifdef _DEBUG
+			info("SEGAAPI_SetReleaseState: Handle: %08X, Status: OPEN_SEGAERR_BAD_HANDLE", hHandle);
+#endif
+			return OPEN_SEGAERR_BAD_HANDLE;
 		}
 
 #ifdef _DEBUG
@@ -847,11 +883,14 @@ extern "C" {
 		return OPEN_SEGA_SUCCESS;
 	}
 
-	__declspec(dllexport) OPENSEGASTATUS SEGAAPI_DestroyBuffer(void* hHandle)
+	__declspec(dllexport) OPEN_SEGASTATUS SEGAAPI_DestroyBuffer(void* hHandle)
 	{
 		if (hHandle == NULL)
 		{
-			return OPENSEGAERR_BAD_HANDLE;
+#ifdef _DEBUG
+			info("SEGAAPI_DestroyBuffer: Handle: %08X, Status: OPEN_SEGAERR_BAD_HANDLE", hHandle);
+#endif
+			return OPEN_SEGAERR_BAD_HANDLE;
 		}
 
 #ifdef _DEBUG
@@ -875,9 +914,8 @@ extern "C" {
 		return TRUE;
 	}
 
-	__declspec(dllexport) OPENSEGASTATUS SEGAAPI_Init(void)
+	__declspec(dllexport) OPEN_SEGASTATUS SEGAAPI_Init(void)
 	{
-
 #ifdef _DEBUG
 		info("SEGAAPI_Init");
 #endif
@@ -932,7 +970,7 @@ extern "C" {
 		return OPEN_SEGA_SUCCESS;
 	}
 
-	__declspec(dllexport) OPENSEGASTATUS SEGAAPI_Exit(void)
+	__declspec(dllexport) OPEN_SEGASTATUS SEGAAPI_Exit(void)
 	{
 #ifdef _DEBUG
 		info("SEGAAPI_Exit");
@@ -946,7 +984,7 @@ extern "C" {
 		return OPEN_SEGA_SUCCESS;
 	}
 
-	__declspec(dllexport) OPENSEGASTATUS SEGAAPI_Reset(void)
+	__declspec(dllexport) OPEN_SEGASTATUS SEGAAPI_Reset(void)
 	{
 #ifdef _DEBUG
 		info("SEGAAPI_Reset");
@@ -954,7 +992,7 @@ extern "C" {
 		return OPEN_SEGA_SUCCESS;
 	}
 
-	__declspec(dllexport) OPENSEGASTATUS SEGAAPI_SetIOVolume(OPEN_HAPHYSICALIO dwPhysIO, unsigned int dwVolume)
+	__declspec(dllexport) OPEN_SEGASTATUS SEGAAPI_SetIOVolume(OPEN_HAPHYSICALIO dwPhysIO, unsigned int dwVolume)
 	{
 #ifdef _DEBUG
 		info("SEGAAPI_SetIOVolume: dwPhysIO: %08X dwVolume: %08X", dwPhysIO, dwVolume);
@@ -1014,11 +1052,20 @@ extern "C" {
 		}
 	}
 
-	__declspec(dllexport) OPENSEGASTATUS SEGAAPI_SetSendRouting(void* hHandle, unsigned int dwChannel, unsigned int dwSend, OPEN_HAROUTING dwDest)
+	__declspec(dllexport) OPEN_SEGASTATUS SEGAAPI_SetSendRouting(void* hHandle, unsigned int dwChannel, unsigned int dwSend, OPEN_HAROUTING dwDest)
 	{
+		if (hHandle == NULL)
+		{
+#ifdef _DEBUG
+			info("SEGAAPI_SetSendRouting: Handle: %08X, Status: OPEN_SEGAERR_BAD_HANDLE", hHandle);
+#endif
+			return OPEN_SEGAERR_BAD_HANDLE;
+		}
+
 #ifdef _DEBUG
 		info("SEGAAPI_SetSendRouting: hHandle: %08X dwChannel: %08X dwSend: %08X dwDest: %08X", hHandle, dwChannel, dwSend, dwDest);
 #endif
+
 		OPEN_segaapiBuffer_t* buffer = (OPEN_segaapiBuffer_t*)hHandle;
 		buffer->sendRoutes[dwSend] = dwDest;
 		buffer->sendChannels[dwSend] = dwChannel;
@@ -1027,11 +1074,20 @@ extern "C" {
 		return OPEN_SEGA_SUCCESS;
 	}
 
-	__declspec(dllexport) OPENSEGASTATUS SEGAAPI_SetSendLevel(void* hHandle, unsigned int dwChannel, unsigned int dwSend, unsigned int dwLevel)
+	__declspec(dllexport) OPEN_SEGASTATUS SEGAAPI_SetSendLevel(void* hHandle, unsigned int dwChannel, unsigned int dwSend, unsigned int dwLevel)
 	{
+		if (hHandle == NULL)
+		{
+#ifdef _DEBUG
+			info("SEGAAPI_SetSendLevel: Handle: %08X, Status: OPEN_SEGAERR_BAD_HANDLE", hHandle);
+#endif
+			return OPEN_SEGAERR_BAD_HANDLE;
+		}
+
 #ifdef _DEBUG
 		info("SEGAAPI_SetSendLevel: hHandle: %08X dwChannel: %08X dwSend: %08X dwLevel: %08X", hHandle, dwChannel, dwSend, dwLevel);
 #endif
+
 		OPEN_segaapiBuffer_t* buffer = (OPEN_segaapiBuffer_t*)hHandle;
 		buffer->sendVolumes[dwSend] = dwLevel / (float)0xFFFFFFFF;
 		buffer->sendChannels[dwSend] = dwChannel;
@@ -1040,11 +1096,20 @@ extern "C" {
 		return OPEN_SEGA_SUCCESS;
 	}
 
-	__declspec(dllexport) OPENSEGASTATUS SEGAAPI_SetSynthParam(void* hHandle, OPEN_HASYNTHPARAMSEXT param, int lPARWValue)
+	__declspec(dllexport) OPEN_SEGASTATUS SEGAAPI_SetSynthParam(void* hHandle, OPEN_HASYNTHPARAMSEXT param, int lPARWValue)
 	{
+		if (hHandle == NULL)
+		{
+#ifdef _DEBUG
+			info("SEGAAPI_SetSynthParam: Handle: %08X, Status: OPEN_SEGAERR_BAD_HANDLE", hHandle);
+#endif
+			return OPEN_SEGAERR_BAD_HANDLE;
+		}
+
 #ifdef _DEBUG
 		info("SEGAAPI_SetSynthParam: hHandle: %08X OPEN_HASYNTHPARAMSEXT: %08X lPARWValue: %08X", hHandle, param, lPARWValue);
 #endif
+
 		enum
 		{
 			StartAddrsOffset,
@@ -1171,17 +1236,35 @@ extern "C" {
 
 	__declspec(dllexport) int SEGAAPI_GetSynthParam(void * hHandle, OPEN_HASYNTHPARAMSEXT param)
 	{
+		if (hHandle == NULL)
+		{
+#ifdef _DEBUG
+			info("SEGAAPI_GetSynthParam: Handle: %08X, Status: OPEN_SEGAERR_BAD_HANDLE", hHandle);
+#endif
+			return OPEN_SEGAERR_BAD_HANDLE;
+		}
+
 #ifdef _DEBUG
 		info("SEGAAPI_GetSynthParam: hHandle: %08X OPEN_HASYNTHPARAMSEXT: %08X", hHandle, param);
 #endif
+
 		return 0; //todo not sure if actually used
 	}
 
-	__declspec(dllexport) OPENSEGASTATUS SEGAAPI_SetSynthParamMultiple(void* hHandle, unsigned int dwNumParams, OPEN_SynthParamSet* pSynthParams)
+	__declspec(dllexport) OPEN_SEGASTATUS SEGAAPI_SetSynthParamMultiple(void* hHandle, unsigned int dwNumParams, OPEN_SynthParamSet* pSynthParams)
 	{
+		if (hHandle == NULL)
+		{
+#ifdef _DEBUG
+			info("SEGAAPI_SetSynthParamMultiple: Handle: %08X, Status: OPEN_SEGAERR_BAD_HANDLE", hHandle);
+#endif
+			return OPEN_SEGAERR_BAD_HANDLE;
+		}
+
 #ifdef _DEBUG
 		info("SEGAAPI_SetSynthParamMultiple: hHandle: %08X dwNumParams: %08X pSynthParams: %08X", hHandle, dwNumParams, pSynthParams);
 #endif
+
 		for (int i = 0; i < dwNumParams; i++)
 		{
 			SEGAAPI_SetSynthParam(hHandle, pSynthParams[i].param, pSynthParams[i].lPARWValue);
@@ -1189,11 +1272,20 @@ extern "C" {
 		return OPEN_SEGA_SUCCESS;
 	}
 
-	__declspec(dllexport) OPENSEGASTATUS SEGAAPI_SetChannelVolume(void* hHandle, unsigned int dwChannel, unsigned int dwVolume)
+	__declspec(dllexport) OPEN_SEGASTATUS SEGAAPI_SetChannelVolume(void* hHandle, unsigned int dwChannel, unsigned int dwVolume)
 	{
+		if (hHandle == NULL)
+		{
+#ifdef _DEBUG
+			info("SEGAAPI_SetChannelVolume: Handle: %08X, Status: OPEN_SEGAERR_BAD_HANDLE", hHandle);
+#endif
+			return OPEN_SEGAERR_BAD_HANDLE;
+		}
+
 #ifdef _DEBUG
 		info("SEGAAPI_SetChannelVolume: hHandle: %08X dwChannel: %08X dwVolume: %08X", hHandle, dwChannel, dwVolume);
 #endif
+
 		OPEN_segaapiBuffer_t* buffer = (OPEN_segaapiBuffer_t*)hHandle;
 		buffer->channelVolumes[dwChannel] = dwVolume / (float)0xFFFFFFFF;
 		return OPEN_SEGA_SUCCESS;
@@ -1201,18 +1293,36 @@ extern "C" {
 
 	__declspec(dllexport) unsigned int SEGAAPI_GetChannelVolume(void* hHandle, unsigned int dwChannel)
 	{
+		if (hHandle == NULL)
+		{
+#ifdef _DEBUG
+			info("SEGAAPI_GetChannelVolume: Handle: %08X, Status: OPEN_SEGAERR_BAD_HANDLE", hHandle);
+#endif
+			return OPEN_SEGAERR_BAD_HANDLE;
+		}
+
 #ifdef _DEBUG
 		info("SEGAAPI_GetChannelVolume: hHandle: %08X dwChannel: %08X", hHandle, dwChannel);
 #endif
+
 		OPEN_segaapiBuffer_t* buffer = (OPEN_segaapiBuffer_t*)hHandle;
 		return buffer->channelVolumes[dwChannel];
 	}
 
-	__declspec(dllexport) OPENSEGASTATUS SEGAAPI_Pause(void* hHandle)
+	__declspec(dllexport) OPEN_SEGASTATUS SEGAAPI_Pause(void* hHandle)
 	{
+		if (hHandle == NULL)
+		{
+#ifdef _DEBUG
+			info("SEGAAPI_Pause: Handle: %08X, Status: OPEN_SEGAERR_BAD_HANDLE", hHandle);
+#endif
+			return OPEN_SEGAERR_BAD_HANDLE;
+		}
+
 #ifdef _DEBUG
 		info("SEGAAPI_Pause: hHandle: %08X", hHandle);
 #endif
+
 		OPEN_segaapiBuffer_t* buffer = (OPEN_segaapiBuffer_t*)hHandle;
 
 		buffer->playing = false;
@@ -1221,7 +1331,7 @@ extern "C" {
 		return OPEN_SEGA_SUCCESS;
 	}
 
-	__declspec(dllexport) OPENSEGASTATUS SEGAAPI_PlayWithSetup(
+	__declspec(dllexport) OPEN_SEGASTATUS SEGAAPI_PlayWithSetup(
 		void* hHandle,
 		unsigned int dwNumSendRouteParams, OPEN_SendRouteParamSet* pSendRouteParams,
 		unsigned int dwNumSendLevelParams, OPEN_SendLevelParamSet* pSendLevelParams,
@@ -1229,10 +1339,19 @@ extern "C" {
 		unsigned int dwNumSynthParams, OPEN_SynthParamSet* pSynthParams
 	)
 	{
+		if (hHandle == NULL)
+		{
+#ifdef _DEBUG
+			info("SEGAAPI_PlayWithSetup: Handle: %08X, Status: OPEN_SEGAERR_BAD_HANDLE", hHandle);
+#endif
+			return OPEN_SEGAERR_BAD_HANDLE;
+		}
+
 #ifdef _DEBUG
 		info("SEGAAPI_PlayWithSetup: hHandle: %08X dwNumSendRouteParams: %d pSendRouteParams: %08X dwNumSendLevelParams: %d pSendLevelParams: %08X dwNumVoiceParams: %d pVoiceParams: %08X dwNumSynthParams: %d pSynthParams: %08X", hHandle, dwNumSendRouteParams, *pSendRouteParams, dwNumSendLevelParams, *pSendLevelParams, dwNumVoiceParams, *pVoiceParams, dwNumSynthParams, *pSynthParams);
 		info("dwNumSynthParams: %d", dwNumSynthParams);
 #endif
+
 		OPEN_segaapiBuffer_t* buffer = (OPEN_segaapiBuffer_t*)hHandle;
 		buffer->playWithSetup = true;
 
@@ -1303,7 +1422,7 @@ extern "C" {
 		return OPEN_SEGA_SUCCESS;
 	}
 
-	__declspec(dllexport) OPENSEGASTATUS SEGAAPI_GetLastStatus(void)
+	__declspec(dllexport) OPEN_SEGASTATUS SEGAAPI_GetLastStatus(void)
 	{
 #ifdef _DEBUG
 		info("SEGAAPI_GetLastStatus");
