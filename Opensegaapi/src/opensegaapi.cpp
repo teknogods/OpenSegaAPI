@@ -105,7 +105,12 @@ struct OPEN_segaapiBuffer_t
 	unsigned int startLoop;
 	unsigned int endLoop;
 	unsigned int endOffset;
+	// Ensure sample rate is valid to prevent playback issues
 	unsigned int sampleRate;
+	if (sampleRate < 8000 || sampleRate > 192000) {
+    	   printf("Error: Invalid sample rate detected: %u\n", sampleRate);
+           return OPEN_SEGAERR_BAD_SAMPLERATE; 
+	}
 	unsigned int sampleFormat;
 	uint8_t* data;
 	size_t size;
@@ -118,10 +123,11 @@ struct OPEN_segaapiBuffer_t
 	XAUDIO2_BUFFER xaBuffer;
 	IXAudio2SourceVoice* xaVoice;
 
-	float sendVolumes[7];
-	int sendChannels[7];
+	// Initialize volumes to prevent muted audio or imbalanced channels
+	float sendVolumes[7] = {1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f};
+	int sendChannels[7] = {0, 1, 2, 3, 4, 5, 6};
 	OPEN_HAROUTING sendRoutes[7];
-	float channelVolumes[6];
+	float channelVolumes[6] = {1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f};
 
 	tsf* synth;
 	tsf_region* region;
@@ -135,7 +141,12 @@ void XA2Callback::OnBufferEnd(void* cxt)
 {
 	std::function<void()> entry;
 
-	while (!buffer->defers.empty())
+	// Add error handling for buffer state to prevent playback issues
+	if (!buffer || !buffer->xaVoice) {
+    	   printf("Error: Invalid buffer or voice state detected.\n");
+    	   return;
+	}
+	while (!buffer->defers.empty()) {
 	{
 		XAUDIO2_VOICE_STATE vs;
 		buffer->xaVoice->GetState(&vs);
