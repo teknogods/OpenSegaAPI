@@ -112,6 +112,7 @@ struct OPEN_segaapiBuffer_t
 	bool playing;
 	bool paused;
 	bool playWithSetup;
+	bool ownsData;
 
 	WAVEFORMATEX xaFormat;
 
@@ -129,10 +130,21 @@ struct OPEN_segaapiBuffer_t
 	XA2Callback xaCallback;
 
 	concurrency::concurrent_queue<std::function<void()>> defers;
+
+	struct PendingBuffer { // Pending buffer queue for when XAudio2 queue is full
+		unsigned int startOffset;
+		unsigned int endOffset;
+		bool isLoop;
+		unsigned int loopStart;
+		unsigned int loopEnd;
+	};
+	concurrency::concurrent_queue<PendingBuffer> pendingBuffers;
 };
 
 void XA2Callback::OnBufferEnd(void* cxt)
 {
+	info("XA2Callback::OnBufferEnd - Buffer finished playing");
+
 	std::function<void()> entry;
 
 	while (!buffer->defers.empty())
@@ -143,13 +155,70 @@ void XA2Callback::OnBufferEnd(void* cxt)
 		if (vs.BuffersQueued > 0)
 		{
 			buffer->xaVoice->FlushSourceBuffers();
-
 			return;
 		}
 
 		if (buffer->defers.try_pop(entry))
 		{
 			entry();
+		}
+	}
+	
+	OPEN_segaapiBuffer_t::PendingBuffer pending;
+	if (buffer->pendingBuffers.try_pop(pending)) // Try to submit any pending buffers from our overflow queue
+	{
+		info("XA2Callback::OnBufferEnd - Submitting pending buffer from queue");
+
+		unsigned int sampleSize = buffer->channels * ((buffer->sampleFormat == OPEN_HASF_SIGNED_16PCM) ? 2 : 1);
+
+		XAUDIO2_BUFFER xaBuffer = { 0 };
+		xaBuffer.Flags = 0;
+		xaBuffer.AudioBytes = buffer->size;
+		xaBuffer.pAudioData = buffer->data;
+
+		unsigned int playBegin = pending.startOffset / sampleSize;
+		unsigned int playLength = (pending.endOffset - pending.startOffset) / sampleSize;
+
+		if (pending.isLoop)
+		{
+			unsigned int loopBegin = pending.loopStart / sampleSize;
+			unsigned int loopEnd = pending.loopEnd / sampleSize;
+			unsigned int playEnd = playBegin + playLength;
+			
+			if (loopBegin >= playBegin && loopEnd <= playEnd) // Only enable looping if ENTIRE loop region fits within play region
+			{
+				xaBuffer.PlayBegin = playBegin;
+				xaBuffer.PlayLength = playLength;
+				xaBuffer.LoopBegin = loopBegin;
+				xaBuffer.LoopLength = loopEnd - loopBegin;
+				xaBuffer.LoopCount = XAUDIO2_LOOP_INFINITE;
+			}
+			else
+			{
+				xaBuffer.PlayBegin = playBegin;
+				xaBuffer.PlayLength = playLength;
+				xaBuffer.LoopBegin = 0;
+				xaBuffer.LoopLength = 0;
+				xaBuffer.LoopCount = 0;
+			}
+		}
+		else
+		{
+			xaBuffer.PlayBegin = playBegin;
+			xaBuffer.PlayLength = playLength;
+			xaBuffer.LoopBegin = 0;
+			xaBuffer.LoopLength = 0;
+			xaBuffer.LoopCount = 0;
+		}
+
+		HRESULT hr = buffer->xaVoice->SubmitSourceBuffer(&xaBuffer);
+		if (FAILED(hr))
+		{
+			info("XA2Callback::OnBufferEnd - Failed to submit pending buffer: 0x%08x", hr);
+		}
+		else
+		{
+			info("XA2Callback::OnBufferEnd - Successfully submitted pending buffer");
 		}
 	}
 }
@@ -209,6 +278,11 @@ static void dumpWaveBuffer(const char* path, unsigned int channels, unsigned int
 	struct WAVE_Data wave_data;
 
 	soundFile = fopen(path, "wb");
+	if (soundFile == NULL)
+	{
+		info("dumpWaveBuffer: Failed to open file %s", path);
+		return;
+	}
 
 	riff_header.chunkID[0] = 'R';
 	riff_header.chunkID[1] = 'I';
@@ -395,6 +469,16 @@ static void resetBuffer(OPEN_segaapiBuffer_t* buffer)
 	buffer->sendChannels[5] = 0;
 	buffer->sendChannels[6] = 0;
 
+	// Free old resources if they exist
+	if (buffer->synth)
+	{
+		TSF_FREE(buffer->synth);
+	}
+	if (buffer->region)
+	{
+		delete buffer->region;
+	}
+
 	auto res = (tsf*)TSF_MALLOC(sizeof(tsf));
 	TSF_MEMSET(res, 0, sizeof(tsf));
 	res->presetNum = 0;
@@ -423,54 +507,146 @@ static IXAudio2SubmixVoice* g_submixVoices[6];
 
 static void updateBufferNew(OPEN_segaapiBuffer_t* buffer, unsigned int offset, size_t length)
 {
-	// don't update with pending defers
+	info("updateBufferNew offset=%08X length=%08X", offset, length);
+
 	if (!buffer->defers.empty())
 	{
 		info("updateBufferNew: DEFER!");
 		return;
 	}
 
-	CHECK_HR(buffer->xaVoice->FlushSourceBuffers());
+	if (buffer->xaVoice == NULL)
+	{
+		info("updateBufferNew: xaVoice is NULL!");
+		return;
+	}
+
+	unsigned int sampleSize = bufferSampleSize(buffer);
+	if (sampleSize == 0)
+	{
+		info("updateBufferNew: Invalid buffer sample size (0)!");
+		return;
+	}
+
+	XAUDIO2_VOICE_STATE vs;
+	buffer->xaVoice->GetState(&vs);
+
+	info("updateBufferNew: buffersQueued=%d, playing=%d, loop=%d", vs.BuffersQueued, buffer->playing, buffer->loop);
+
+	// Determine actual offsets
+	unsigned int actualStartOffset = (offset == (unsigned int)-1) ? buffer->startLoop : offset;
+	unsigned int actualEndOffset;
+
+	if (length == (size_t)-1)
+	{
+		actualEndOffset = min(buffer->endLoop, buffer->endOffset);
+	}
+	else
+	{
+		actualEndOffset = actualStartOffset + length;
+		actualEndOffset = min(actualEndOffset, buffer->size);
+	}
+
+	actualStartOffset = min(actualStartOffset, buffer->size);
+	actualEndOffset = min(actualEndOffset, buffer->size);
+
+	if (actualEndOffset <= actualStartOffset)
+	{
+		info("updateBufferNew: Invalid range, using full buffer");
+		actualStartOffset = 0;
+		actualEndOffset = buffer->size;
+	}
+
+	// If XAudio2 queue is getting full, add to our overflow queue instead
+	const int MAX_XAUDIO_BUFFERS = 60; // Leave some margin before the 64 limit
+
+	if (vs.BuffersQueued >= MAX_XAUDIO_BUFFERS)
+	{
+		info("updateBufferNew: XAudio2 queue full (%d buffers), adding to pending queue", vs.BuffersQueued);
+
+		OPEN_segaapiBuffer_t::PendingBuffer pending;
+		pending.startOffset = actualStartOffset;
+		pending.endOffset = actualEndOffset;
+		pending.isLoop = buffer->loop;
+		pending.loopStart = buffer->startLoop;
+		pending.loopEnd = min(buffer->endLoop, buffer->endOffset);
+
+		buffer->pendingBuffers.push(pending);
+		return;
+	}
+
+	// Only flush if not playing to avoid audio glitches
+	if (!buffer->playing && vs.BuffersQueued > 0)
+	{
+		info("updateBufferNew: Flushing %d old buffers from stopped voice", vs.BuffersQueued);
+		buffer->xaVoice->FlushSourceBuffers();
+	}
 
 	buffer->xaBuffer.Flags = 0;
 	buffer->xaBuffer.AudioBytes = buffer->size;
 	buffer->xaBuffer.pAudioData = buffer->data;
 
+	unsigned int playBegin = actualStartOffset / sampleSize;
+	unsigned int playLength = (actualEndOffset - actualStartOffset) / sampleSize;
+
 	if (buffer->loop)
 	{
-		info("updateBufferNew: loop");
+		unsigned int loopBegin = buffer->startLoop / sampleSize;
+		unsigned int loopEnd = min(buffer->endLoop, buffer->endOffset) / sampleSize;
 
-		// Note: Sega uses byte offsets for begin and end
-		//       Xaudio2 uses start sample and length in samples
-		buffer->xaBuffer.PlayBegin = buffer->startLoop / bufferSampleSize(buffer);
-		buffer->xaBuffer.PlayLength = (min(buffer->endLoop, buffer->endOffset) - buffer->startLoop) / bufferSampleSize(buffer);
-		buffer->xaBuffer.LoopBegin = buffer->xaBuffer.PlayBegin;
-		buffer->xaBuffer.LoopLength = buffer->xaBuffer.PlayLength;
-		buffer->xaBuffer.LoopCount = XAUDIO2_LOOP_INFINITE;
+		// Check if loop region is valid within play region
+		unsigned int playEnd = playBegin + playLength;
+
+		// Only enable looping if the ENTIRE loop region fits within the play region
+		if (loopBegin >= playBegin && loopEnd <= playEnd)
+		{
+			info("updateBufferNew: loop mode - full loop within play region");
+			buffer->xaBuffer.PlayBegin = playBegin;
+			buffer->xaBuffer.PlayLength = playLength;
+			buffer->xaBuffer.LoopBegin = loopBegin;
+			buffer->xaBuffer.LoopLength = loopEnd - loopBegin;
+			buffer->xaBuffer.LoopCount = XAUDIO2_LOOP_INFINITE;
+		}
+		else
+		{
+			// Loop region doesn't fit - play without looping to avoid XAudio2 error
+			info("updateBufferNew: loop region doesn't fit (loop %d-%d, play %d-%d), disabling loop for this segment", loopBegin, loopEnd, playBegin, playEnd);
+			buffer->xaBuffer.PlayBegin = playBegin;
+			buffer->xaBuffer.PlayLength = playLength;
+			buffer->xaBuffer.LoopBegin = 0;
+			buffer->xaBuffer.LoopLength = 0;
+			buffer->xaBuffer.LoopCount = 0;
+		}
 		buffer->xaBuffer.pContext = NULL;
 	}
 	else
 	{
 		info("updateBufferNew: no loop");
-		buffer->xaBuffer.PlayBegin = buffer->startLoop / bufferSampleSize(buffer);
-		buffer->xaBuffer.PlayLength = (min(buffer->endLoop, buffer->endOffset) - buffer->startLoop) / bufferSampleSize(buffer);
+		buffer->xaBuffer.PlayBegin = playBegin;
+		buffer->xaBuffer.PlayLength = playLength;
 		buffer->xaBuffer.LoopBegin = 0;
 		buffer->xaBuffer.LoopLength = 0;
 		buffer->xaBuffer.LoopCount = 0;
 		buffer->xaBuffer.pContext = NULL;
 	}
 
-	buffer->xaVoice->SubmitSourceBuffer(&buffer->xaBuffer);
+	info("updateBufferNew: PlayBegin=%d, PlayLength=%d, LoopBegin=%d, LoopLength=%d",
+		buffer->xaBuffer.PlayBegin, buffer->xaBuffer.PlayLength,
+		buffer->xaBuffer.LoopBegin, buffer->xaBuffer.LoopLength);
 
-	// Uncomment to dump audio buffers to wav files (super slow)
-	/*auto sampleBits = (buffer->sampleFormat == OPEN_HASF_SIGNED_16PCM) ? 16 : 8;
-	char path[255];
-	sprintf(path, "C:\\dump\\%08X.wav", &buffer);
-	dumpWaveBuffer(path, buffer->channels, buffer->sampleRate, sampleBits, buffer->data, buffer->size);*/
+	HRESULT hr = buffer->xaVoice->SubmitSourceBuffer(&buffer->xaBuffer);
+	if (FAILED(hr))
+	{
+		info("updateBufferNew: SubmitSourceBuffer failed with HRESULT 0x%08x", hr);
+	}
+	else
+	{
+		info("updateBufferNew: Buffer submitted successfully");
+	}
 }
 
 extern "C" {
-	__declspec(dllexport) OPEN_SEGASTATUS SEGAAPI_CreateBuffer(OPEN_HAWOSEBUFFERCONFIG* pConfig, OPEN_HAWOSEGABUFFERCALLBACK pCallback, unsigned int dwFlags, void* * phHandle)
+	__declspec(dllexport) OPEN_SEGASTATUS SEGAAPI_CreateBuffer(OPEN_HAWOSEBUFFERCONFIG* pConfig, OPEN_HAWOSEGABUFFERCALLBACK pCallback, unsigned int dwFlags, void** phHandle)
 	{
 		if (phHandle == NULL || pConfig == NULL)
 		{
@@ -479,6 +655,27 @@ extern "C" {
 		}
 
 		OPEN_segaapiBuffer_t* buffer = new OPEN_segaapiBuffer_t;
+
+		// Initialize POD fields explicitly
+		buffer->userData = nullptr;
+		buffer->callback = pCallback;
+		buffer->synthesizer = false;
+		buffer->loop = false;
+		buffer->channels = 0;
+		buffer->startLoop = 0;
+		buffer->endLoop = 0;
+		buffer->endOffset = 0;
+		buffer->sampleRate = 0;
+		buffer->sampleFormat = 0;
+		buffer->data = nullptr;
+		buffer->size = 0;
+		buffer->playing = false;
+		buffer->paused = false;
+		buffer->playWithSetup = false;
+		buffer->ownsData = false;
+		buffer->xaVoice = nullptr;
+		buffer->synth = nullptr;
+		buffer->region = nullptr;
 
 		info("SEGAAPI_CreateBuffer: hHandle: %08X synth: %d, mem caller: %d, mem last: %d, mem alloc: %d, size: %d SampleRate: %d, byNumChans: %d, dwPriority: %d, dwSampleFormat: %d", buffer, (dwFlags & OPEN_HABUF_SYNTH_BUFFER), (dwFlags & OPEN_HABUF_ALLOC_USER_MEM) >> 1, (dwFlags & OPEN_HABUF_USE_MAPPED_MEM) >> 2, dwFlags == 0, pConfig->mapData.dwSize, pConfig->dwSampleRate, pConfig->byNumChans, pConfig->dwPriority, pConfig->dwSampleFormat);
 
@@ -496,16 +693,19 @@ extern "C" {
 		if (dwFlags & OPEN_HABUF_ALLOC_USER_MEM)
 		{
 			buffer->data = (uint8_t*)pConfig->mapData.hBufferHdr;
+			buffer->ownsData = false;
 		}
 		// Reuse buffer
 		else if (dwFlags & OPEN_HABUF_USE_MAPPED_MEM)
 		{
 			buffer->data = (uint8_t*)pConfig->mapData.hBufferHdr;
+			buffer->ownsData = false;
 		}
 		// Allocate new buffer (caller will fill it later)
 		else
 		{
 			buffer->data = (uint8_t*)malloc(buffer->size);
+			buffer->ownsData = true;
 		}
 
 		pConfig->mapData.hBufferHdr = buffer->data;
@@ -534,7 +734,7 @@ extern "C" {
 		resetBuffer(buffer);
 
 		*phHandle = buffer;
-		
+
 		return OPEN_SEGA_SUCCESS;
 	}
 
@@ -567,6 +767,67 @@ extern "C" {
 		return buffer->userData;
 	}
 
+	static void updateRouting(OPEN_segaapiBuffer_t* buffer)
+	{
+		float levels[7 * 6];  // Maximum: 7 routes * 6 channels
+		IXAudio2SubmixVoice* outVoices[7];
+
+		int numRoutes = 0;
+
+		for (int i = 0; i < /*7*/2; i++)
+		{
+			// Validate routing destination is within valid range
+			if (buffer->sendRoutes[i] != OPEN_HA_UNUSED_PORT &&
+				buffer->sendRoutes[i] >= 0 &&
+				buffer->sendRoutes[i] < 6)
+			{
+				outVoices[numRoutes] = g_submixVoices[buffer->sendRoutes[i]];
+
+				int levelOff = numRoutes * buffer->channels;
+
+				for (unsigned int ch = 0; ch < buffer->channels; ch++)
+				{
+					levels[levelOff + ch] = 0;
+				}
+
+				// Bounds check for sendChannels
+				if (buffer->sendChannels[i] >= 0 &&
+					buffer->sendChannels[i] < (int)buffer->channels &&
+					buffer->sendChannels[i] < 6)
+				{
+					float level = buffer->sendVolumes[i] * buffer->channelVolumes[buffer->sendChannels[i]];
+					levels[levelOff + buffer->sendChannels[i]] = level;
+				}
+
+				++numRoutes;
+			}
+		}
+
+		// can't set no routes
+		if (numRoutes == 0)
+		{
+			info("updateRouting: No valid routes found, skipping");
+			return;
+		}
+
+		XAUDIO2_SEND_DESCRIPTOR sendDescs[7];
+		for (int i = 0; i < numRoutes; i++)
+		{
+			sendDescs[i].Flags = 0;
+			sendDescs[i].pOutputVoice = outVoices[i];
+		}
+
+		XAUDIO2_VOICE_SENDS sends;
+		sends.SendCount = numRoutes;
+		sends.pSends = sendDescs;
+		CHECK_HR(buffer->xaVoice->SetOutputVoices(&sends));
+
+		for (int i = 0; i < numRoutes; i++)
+		{
+			CHECK_HR(buffer->xaVoice->SetOutputMatrix(outVoices[i], buffer->channels, 1, &levels[i * buffer->channels]));
+		}
+	}
+
 	__declspec(dllexport) OPEN_SEGASTATUS SEGAAPI_UpdateBuffer(void* hHandle, unsigned int dwStartOffset, unsigned int dwLength)
 	{
 		if (hHandle == NULL)
@@ -578,6 +839,35 @@ extern "C" {
 		info("SEGAAPI_UpdateBuffer: Handle: %08X dwStartOffset: %08X, dwLength: %08X", hHandle, dwStartOffset, dwLength);
 
 		OPEN_segaapiBuffer_t* buffer = (OPEN_segaapiBuffer_t*)hHandle;
+
+		// Check if we have any valid routes set up before updating
+		bool hasValidRoutes = false;
+		for (int i = 0; i < 7; i++)
+		{
+			if (buffer->sendRoutes[i] != OPEN_HA_UNUSED_PORT &&
+				buffer->sendRoutes[i] >= 0 &&
+				buffer->sendRoutes[i] < 6)
+			{
+				hasValidRoutes = true;
+				break;
+			}
+		}
+
+		// If no valid routes, set up default stereo routing before buffer update
+		if (!hasValidRoutes)
+		{
+			info("SEGAAPI_UpdateBuffer: No valid routes detected, setting up default stereo");
+			buffer->sendRoutes[0] = OPEN_HA_FRONT_LEFT_PORT;
+			buffer->sendRoutes[1] = OPEN_HA_FRONT_RIGHT_PORT;
+			buffer->sendVolumes[0] = 1.0f;
+			buffer->sendVolumes[1] = 1.0f;
+			buffer->sendChannels[0] = 0;
+			buffer->sendChannels[1] = 1;
+
+			// Actually apply the routing configuration to XAudio2
+			updateRouting(buffer);
+			info("SEGAAPI_UpdateBuffer: Default routing applied");
+		}
 
 		updateBufferNew(buffer, dwStartOffset, dwLength);
 		return OPEN_SEGA_SUCCESS;
@@ -694,11 +984,18 @@ extern "C" {
 
 		OPEN_segaapiBuffer_t* buffer = (OPEN_segaapiBuffer_t*)hHandle;
 
+		if (buffer->xaVoice == NULL)
+		{
+			return 0;
+		}
+
 		XAUDIO2_VOICE_STATE vs;
 		buffer->xaVoice->GetState(&vs);
 
-		unsigned int result = (vs.SamplesPlayed * (buffer->xaFormat.wBitsPerSample / 8) * buffer->xaFormat.nChannels) % buffer->size;
-		
+		// Use modulo on 64-bit value to prevent overflow
+		UINT64 bytePosition = (vs.SamplesPlayed * (buffer->xaFormat.wBitsPerSample / 8) * buffer->xaFormat.nChannels);
+		unsigned int result = (unsigned int)(bytePosition % buffer->size);
+
 		info("SEGAAPI_GetPlaybackPosition: Handle: %08X Samples played: %08d BitsPerSample %08d/%08d nChannels %08d bufferSize %08d Result: %08X", hHandle, vs.SamplesPlayed, buffer->xaFormat.wBitsPerSample, (buffer->xaFormat.wBitsPerSample / 8), buffer->xaFormat.nChannels, buffer->size, result);
 
 		return result;
@@ -718,18 +1015,39 @@ extern "C" {
 
 		OPEN_segaapiBuffer_t* buffer = (OPEN_segaapiBuffer_t*)hHandle;
 
+		// Check if we have any valid routes set up
+		bool hasValidRoutes = false;
+		for (int i = 0; i < 7; i++)
+		{
+			if (buffer->sendRoutes[i] != OPEN_HA_UNUSED_PORT &&
+				buffer->sendRoutes[i] >= 0 &&
+				buffer->sendRoutes[i] < 6)
+			{
+				hasValidRoutes = true;
+				break;
+			}
+		}
+
+		// If no valid routes, set up default stereo routing
+		if (!hasValidRoutes)
+		{
+			info("SEGAAPI_Play: No valid routes, setting up default stereo routing");
+			buffer->sendRoutes[0] = OPEN_HA_FRONT_LEFT_PORT;
+			buffer->sendRoutes[1] = OPEN_HA_FRONT_RIGHT_PORT;
+			buffer->sendVolumes[0] = 1.0f;
+			buffer->sendVolumes[1] = 1.0f;
+			buffer->sendChannels[0] = 0;
+			buffer->sendChannels[1] = 1;
+		}
+
 		updateRouting(buffer);
 		updateBufferNew(buffer, -1, -1);
 
 		buffer->playing = true;
 		buffer->paused = false;
 
-		// Uncomment to mute music
-		//if (buffer->playWithSetup)
-		//{
-			CHECK_HR(buffer->xaVoice->Start());
-		//}
-			
+		CHECK_HR(buffer->xaVoice->Start());
+
 		return OPEN_SEGA_SUCCESS;
 	}
 
@@ -828,7 +1146,27 @@ extern "C" {
 
 		OPEN_segaapiBuffer_t* buffer = (OPEN_segaapiBuffer_t*)hHandle;
 
-		buffer->xaVoice->DestroyVoice();
+		if (buffer->xaVoice)
+		{
+			buffer->xaVoice->DestroyVoice();
+		}
+
+		// Free synthesizer resources
+		if (buffer->synth)
+		{
+			TSF_FREE(buffer->synth);
+		}
+		if (buffer->region)
+		{
+			delete buffer->region;
+		}
+
+		// Free audio data only if we allocated it
+		if (buffer->ownsData && buffer->data)
+		{
+			free(buffer->data);
+		}
+
 		delete buffer;
 		return OPEN_SEGA_SUCCESS;
 	}
@@ -921,57 +1259,6 @@ extern "C" {
 		return OPEN_SEGA_SUCCESS;
 	}
 
-	static void updateRouting(OPEN_segaapiBuffer_t* buffer)
-	{
-		float levels[7 * 2];
-		IXAudio2SubmixVoice* outVoices[7];
-
-		int numRoutes = 0;
-
-		for (int i = 0; i < /*7*/2; i++)
-		{
-			if (buffer->sendRoutes[i] != OPEN_HA_UNUSED_PORT && buffer->sendRoutes[i] < 6)
-			{
-				outVoices[numRoutes] = g_submixVoices[buffer->sendRoutes[i]];
-
-				int levelOff = numRoutes * buffer->channels;
-
-				for (int ch = 0; ch < buffer->channels; ch++)
-				{
-					levels[levelOff + ch] = 0;
-				}
-
-				float level = buffer->sendVolumes[i] * buffer->channelVolumes[buffer->sendChannels[i]];
-				levels[levelOff + buffer->sendChannels[i]] = level;
-
-				++numRoutes;
-			}
-		}
-
-		// can't set no routes
-		if (numRoutes == 0)
-		{
-			return;
-		}
-
-		XAUDIO2_SEND_DESCRIPTOR sendDescs[7];
-		for (int i = 0; i < numRoutes; i++)
-		{
-			sendDescs[i].Flags = 0;
-			sendDescs[i].pOutputVoice = outVoices[i];
-		}
-
-		XAUDIO2_VOICE_SENDS sends;
-		sends.SendCount = numRoutes;
-		sends.pSends = sendDescs;
-		CHECK_HR(buffer->xaVoice->SetOutputVoices(&sends));
-
-		for (int i = 0; i < numRoutes; i++)
-		{
-			CHECK_HR(buffer->xaVoice->SetOutputMatrix(outVoices[i], buffer->channels, 1, &levels[i * buffer->channels]));
-		}
-	}
-
 	__declspec(dllexport) OPEN_SEGASTATUS SEGAAPI_SetSendRouting(void* hHandle, unsigned int dwChannel, unsigned int dwSend, OPEN_HAROUTING dwDest)
 	{
 		if (hHandle == NULL)
@@ -981,6 +1268,18 @@ extern "C" {
 		}
 
 		info("SEGAAPI_SetSendRouting: hHandle: %08X dwChannel: %08X dwSend: %08X dwDest: %08X", hHandle, dwChannel, dwSend, dwDest);
+
+		if (dwSend >= 7)
+		{
+			info("SEGAAPI_SetSendRouting: Invalid send %d", dwSend);
+			return OPEN_SEGAERR_BAD_PARAM;
+		}
+
+		if (dwChannel >= 6)
+		{
+			info("SEGAAPI_SetSendRouting: Invalid channel %d", dwChannel);
+			return OPEN_SEGAERR_BAD_PARAM;
+		}
 
 		OPEN_segaapiBuffer_t* buffer = (OPEN_segaapiBuffer_t*)hHandle;
 		buffer->sendRoutes[dwSend] = dwDest;
@@ -1000,6 +1299,18 @@ extern "C" {
 
 		info("SEGAAPI_SetSendLevel: hHandle: %08X dwChannel: %08X dwSend: %08X dwLevel: %08X", hHandle, dwChannel, dwSend, dwLevel);
 
+		if (dwSend >= 7)
+		{
+			info("SEGAAPI_SetSendLevel: Invalid send %d", dwSend);
+			return OPEN_SEGAERR_BAD_PARAM;
+		}
+
+		if (dwChannel >= 6)
+		{
+			info("SEGAAPI_SetSendLevel: Invalid channel %d", dwChannel);
+			return OPEN_SEGAERR_BAD_PARAM;
+		}
+
 		OPEN_segaapiBuffer_t* buffer = (OPEN_segaapiBuffer_t*)hHandle;
 		buffer->sendVolumes[dwSend] = dwLevel / (float)0xFFFFFFFF;
 		buffer->sendChannels[dwSend] = dwChannel;
@@ -1017,6 +1328,12 @@ extern "C" {
 		}
 
 		info("SEGAAPI_SetSynthParam: hHandle: %08X OPEN_HASYNTHPARAMSEXT: %08X lPARWValue: %08X", hHandle, param, lPARWValue);
+
+		if (param >= 26)
+		{
+			info("SEGAAPI_SetSynthParam: Invalid param %d", param);
+			return OPEN_SEGAERR_BAD_PARAM;
+		}
 
 		enum
 		{
@@ -1159,9 +1476,15 @@ extern "C" {
 			return OPEN_SEGAERR_BAD_HANDLE;
 		}
 
+		if (dwNumParams > 0 && pSynthParams == NULL)
+		{
+			info("SEGAAPI_SetSynthParamMultiple: Null params pointer with count %d", dwNumParams);
+			return OPEN_SEGAERR_BAD_POINTER;
+		}
+
 		info("SEGAAPI_SetSynthParamMultiple: hHandle: %08X dwNumParams: %08X pSynthParams: %08X", hHandle, dwNumParams, pSynthParams);
 
-		for (int i = 0; i < dwNumParams; i++)
+		for (unsigned int i = 0; i < dwNumParams; i++)
 		{
 			SEGAAPI_SetSynthParam(hHandle, pSynthParams[i].param, pSynthParams[i].lPARWValue);
 		}
@@ -1180,6 +1503,13 @@ extern "C" {
 		info("SEGAAPI_SetChannelVolume: hHandle: %08X dwChannel: %08X dwVolume: %08X", hHandle, dwChannel, dwVolume);
 
 		OPEN_segaapiBuffer_t* buffer = (OPEN_segaapiBuffer_t*)hHandle;
+
+		if (dwChannel >= 6)
+		{
+			info("SEGAAPI_SetChannelVolume: Invalid channel %d", dwChannel);
+			return OPEN_SEGAERR_BAD_PARAM;
+		}
+
 		buffer->channelVolumes[dwChannel] = dwVolume / (float)0xFFFFFFFF;
 		return OPEN_SEGA_SUCCESS;
 	}
@@ -1189,12 +1519,19 @@ extern "C" {
 		if (hHandle == NULL)
 		{
 			info("SEGAAPI_GetChannelVolume: Handle: %08X, Status: OPEN_SEGAERR_BAD_HANDLE", hHandle);
-			return OPEN_SEGAERR_BAD_HANDLE;
+			return 0;
 		}
 
 		info("SEGAAPI_GetChannelVolume: hHandle: %08X dwChannel: %08X", hHandle, dwChannel);
 
 		OPEN_segaapiBuffer_t* buffer = (OPEN_segaapiBuffer_t*)hHandle;
+
+		if (dwChannel >= 6)
+		{
+			info("SEGAAPI_GetChannelVolume: Invalid channel %d", dwChannel);
+			return 0;
+		}
+
 		return buffer->channelVolumes[dwChannel];
 	}
 
