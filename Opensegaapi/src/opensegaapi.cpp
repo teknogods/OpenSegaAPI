@@ -1511,6 +1511,7 @@ extern "C" {
 		}
 
 		buffer->channelVolumes[dwChannel] = dwVolume / (float)0xFFFFFFFF;
+		updateRouting(buffer);
 		return OPEN_SEGA_SUCCESS;
 	}
 
