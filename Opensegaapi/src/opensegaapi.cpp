@@ -113,6 +113,7 @@ struct OPEN_segaapiBuffer_t
 	bool paused;
 	bool playWithSetup;
 	bool ownsData;
+	bool pendingRouting;
 
 	WAVEFORMATEX xaFormat;
 
@@ -769,6 +770,17 @@ extern "C" {
 
 	static void updateRouting(OPEN_segaapiBuffer_t* buffer)
 	{
+		// Early exit if no routing update is needed
+		if (!buffer->pendingRouting) return;
+
+		// Validate we have a voice to work with
+		if (!buffer->xaVoice)
+		{
+			info("updateRouting: No xaVoice, skipping");
+			buffer->pendingRouting = false;
+			return;
+		}
+
 		float levels[7 * 6];  // Maximum: 7 routes * 6 channels
 		IXAudio2SubmixVoice* outVoices[7];
 
@@ -807,6 +819,7 @@ extern "C" {
 		if (numRoutes == 0)
 		{
 			info("updateRouting: No valid routes found, skipping");
+			buffer->pendingRouting = false;
 			return;
 		}
 
@@ -826,6 +839,9 @@ extern "C" {
 		{
 			CHECK_HR(buffer->xaVoice->SetOutputMatrix(outVoices[i], buffer->channels, 1, &levels[i * buffer->channels]));
 		}
+
+		buffer->pendingRouting = false;
+		info("updateRouting: Routing successfully updated");
 	}
 
 	__declspec(dllexport) OPEN_SEGASTATUS SEGAAPI_UpdateBuffer(void* hHandle, unsigned int dwStartOffset, unsigned int dwLength)
@@ -839,6 +855,13 @@ extern "C" {
 		info("SEGAAPI_UpdateBuffer: Handle: %08X dwStartOffset: %08X, dwLength: %08X", hHandle, dwStartOffset, dwLength);
 
 		OPEN_segaapiBuffer_t* buffer = (OPEN_segaapiBuffer_t*)hHandle;
+
+		// Apply any pending routing changes before updating buffers
+		if (buffer->pendingRouting)
+		{
+			info("SEGAAPI_UpdateBuffer: Applying pending routing changes");
+			updateRouting(buffer);
+		}
 
 		// Check if we have any valid routes set up before updating
 		bool hasValidRoutes = false;
@@ -863,6 +886,7 @@ extern "C" {
 			buffer->sendVolumes[1] = 1.0f;
 			buffer->sendChannels[0] = 0;
 			buffer->sendChannels[1] = 1;
+			buffer->pendingRouting = true;
 
 			// Actually apply the routing configuration to XAudio2
 			updateRouting(buffer);
@@ -1284,8 +1308,8 @@ extern "C" {
 		OPEN_segaapiBuffer_t* buffer = (OPEN_segaapiBuffer_t*)hHandle;
 		buffer->sendRoutes[dwSend] = dwDest;
 		buffer->sendChannels[dwSend] = dwChannel;
+		buffer->pendingRouting = true;
 
-		updateRouting(buffer);
 		return OPEN_SEGA_SUCCESS;
 	}
 
@@ -1314,8 +1338,8 @@ extern "C" {
 		OPEN_segaapiBuffer_t* buffer = (OPEN_segaapiBuffer_t*)hHandle;
 		buffer->sendVolumes[dwSend] = dwLevel / (float)0xFFFFFFFF;
 		buffer->sendChannels[dwSend] = dwChannel;
+		buffer->pendingRouting = true;
 
-		updateRouting(buffer);
 		return OPEN_SEGA_SUCCESS;
 	}
 
@@ -1511,6 +1535,8 @@ extern "C" {
 		}
 
 		buffer->channelVolumes[dwChannel] = dwVolume / (float)0xFFFFFFFF;
+		buffer->pendingRouting = true;
+
 		updateRouting(buffer);
 		return OPEN_SEGA_SUCCESS;
 	}
