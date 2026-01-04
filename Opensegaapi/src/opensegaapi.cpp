@@ -449,8 +449,8 @@ static void resetBuffer(OPEN_segaapiBuffer_t* buffer)
 	buffer->sendRoutes[4] = OPEN_HA_UNUSED_PORT;
 	buffer->sendRoutes[5] = OPEN_HA_UNUSED_PORT;
 	buffer->sendRoutes[6] = OPEN_HA_UNUSED_PORT;
-	buffer->sendVolumes[0] = 0.0f;
-	buffer->sendVolumes[1] = 0.0f;
+	buffer->sendVolumes[0] = 1.0f;
+	buffer->sendVolumes[1] = 1.0f;
 	buffer->sendVolumes[2] = 0.0f;
 	buffer->sendVolumes[3] = 0.0f;
 	buffer->sendVolumes[4] = 0.0f;
@@ -781,41 +781,55 @@ extern "C" {
 			return;
 		}
 
-		float levels[7 * 6];  // Maximum: 7 routes * 6 channels
-		IXAudio2SubmixVoice* outVoices[7];
-
+		bool usedSubmix[6] = { false };  // Track which submix indices are used
+		IXAudio2SubmixVoice* outVoices[6];  // Max 6 unique submixes
+		float levels[6][6];
 		int numRoutes = 0;
 
-		for (int i = 0; i < /*7*/2; i++)
+		// Initialize all levels to 0
+		for (int s = 0; s < 6; s++)
 		{
-			// Validate routing destination is within valid range
-			if (buffer->sendRoutes[i] != OPEN_HA_UNUSED_PORT &&
-				buffer->sendRoutes[i] >= 0 &&
-				buffer->sendRoutes[i] < 6)
+			for (int ch = 0; ch < 6; ch++)
 			{
-				outVoices[numRoutes] = g_submixVoices[buffer->sendRoutes[i]];
-
-				int levelOff = numRoutes * buffer->channels;
-
-				for (unsigned int ch = 0; ch < buffer->channels; ch++)
-				{
-					levels[levelOff + ch] = 0;
-				}
-
-				// Bounds check for sendChannels
-				if (buffer->sendChannels[i] >= 0 &&
-					buffer->sendChannels[i] < (int)buffer->channels &&
-					buffer->sendChannels[i] < 6)
-				{
-					float level = buffer->sendVolumes[i] * buffer->channelVolumes[buffer->sendChannels[i]];
-					levels[levelOff + buffer->sendChannels[i]] = level;
-				}
-
-				++numRoutes;
+				levels[s][ch] = 0.0f;
 			}
 		}
 
-		// can't set no routes
+		// Process all 7 send slots
+		for (int i = 0; i < 7; i++)
+		{
+			// Skip unused or invalid routes
+			if (buffer->sendRoutes[i] == OPEN_HA_UNUSED_PORT ||
+				buffer->sendRoutes[i] < 0 ||
+				buffer->sendRoutes[i] >= 6 ||
+				buffer->sendVolumes[i] <= 0.0f)
+			{
+				continue;
+			}
+
+			int destSubmix = buffer->sendRoutes[i];
+			int srcChannel = buffer->sendChannels[i];
+
+			// Validate source channel
+			if (srcChannel < 0 || srcChannel >= (int)buffer->channels || srcChannel >= 6)
+			{
+				continue;
+			}
+
+			// Add this submix to the list if not already present
+			if (!usedSubmix[destSubmix])
+			{
+				usedSubmix[destSubmix] = true;
+				outVoices[numRoutes] = g_submixVoices[destSubmix];
+				numRoutes++;
+			}
+
+			// Calculate and ADD the level (in case multiple sends route to same submix)
+			float level = buffer->sendVolumes[i] * buffer->channelVolumes[srcChannel];
+			levels[destSubmix][srcChannel] += level;  // ACCUMULATE!
+		}
+
+		// Can't set no routes
 		if (numRoutes == 0)
 		{
 			info("updateRouting: No valid routes found, skipping");
@@ -823,7 +837,8 @@ extern "C" {
 			return;
 		}
 
-		XAUDIO2_SEND_DESCRIPTOR sendDescs[7];
+		// Set up send descriptors (now with unique submixes only!)
+		XAUDIO2_SEND_DESCRIPTOR sendDescs[6];
 		for (int i = 0; i < numRoutes; i++)
 		{
 			sendDescs[i].Flags = 0;
@@ -835,13 +850,29 @@ extern "C" {
 		sends.pSends = sendDescs;
 		CHECK_HR(buffer->xaVoice->SetOutputVoices(&sends));
 
+		// Set output matrices using the accumulated levels
 		for (int i = 0; i < numRoutes; i++)
 		{
-			CHECK_HR(buffer->xaVoice->SetOutputMatrix(outVoices[i], buffer->channels, 1, &levels[i * buffer->channels]));
+			// Find which submix index this voice corresponds to
+			IXAudio2SubmixVoice* voice = outVoices[i];
+			int submixIndex = -1;
+			for (int s = 0; s < 6; s++)
+			{
+				if (g_submixVoices[s] == voice)
+				{
+					submixIndex = s;
+					break;
+				}
+			}
+
+			if (submixIndex >= 0)
+			{
+				CHECK_HR(buffer->xaVoice->SetOutputMatrix(voice, buffer->channels, 1, levels[submixIndex]));
+			}
 		}
 
 		buffer->pendingRouting = false;
-		info("updateRouting: Routing successfully updated");
+		info("updateRouting: Routing successfully updated - %d unique submixes", numRoutes);
 	}
 
 	__declspec(dllexport) OPEN_SEGASTATUS SEGAAPI_UpdateBuffer(void* hHandle, unsigned int dwStartOffset, unsigned int dwLength)
