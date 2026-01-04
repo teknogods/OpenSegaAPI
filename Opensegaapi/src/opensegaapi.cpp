@@ -1093,6 +1093,7 @@ extern "C" {
 			buffer->sendVolumes[1] = 1.0f;
 			buffer->sendChannels[0] = 0;
 			buffer->sendChannels[1] = 1;
+			buffer->pendingRouting = true;
 		}
 
 		updateRouting(buffer);
